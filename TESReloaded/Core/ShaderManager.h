@@ -311,6 +311,8 @@ public:
 	void					SwitchShaderStatus(const char* Name);
 	void					SetCustomConstant(const char* Name, D3DXVECTOR4 Value);
 	void					SetExtraEffectEnabled(const char* Name, bool Value);
+	void					ApplyShaderToTexture(IDirect3DTexture9* DestinationTexture, IDirect3DSurface9* DestinationSurface, IDirect3DTexture9* SampledTexture, float width, float height, ShaderRecordVertex* VertexShader, ShaderRecordPixel* PixelShader);
+
 		
 	ShaderConstants			ShaderConst;
 	CustomConstants			CustomConst;
@@ -339,4 +341,6 @@ public:
 	NiD3DPixelShader*		WaterPixelShaders[51];
     TESObjectCELL*          PreviousCell;
     bool                    IsMenuSwitch;
+
+	IDirect3DVertexBuffer9* TextureShaderVertex;
 };

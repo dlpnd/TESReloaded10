@@ -2007,3 +2007,30 @@ void ShaderManager::SetExtraEffectEnabled(const char* Name, bool Value) {
 	if (v != ExtraEffects.end()) v->second->Enabled = Value;
 
 }
+
+/*
+* Applies a given vertex/pixel shader to a texture, and outputs the result to a destination texture.
+*/
+void ShaderManager::ApplyShaderToTexture(IDirect3DTexture9* DestinationTexture, IDirect3DSurface9* DestinationSurface, IDirect3DTexture9* SampledTexture, float width, float height, ShaderRecordVertex* VertexShader, ShaderRecordPixel* PixelShader) {
+	IDirect3DDevice9* Device = TheRenderManager->device;
+	NiDX9RenderState* RenderState = TheRenderManager->renderState;
+
+	Device->SetDepthStencilSurface(NULL);
+	RenderState->SetRenderState(D3DRS_ZENABLE, D3DZB_FALSE, RenderStateArgs);
+	RenderState->SetRenderState(D3DRS_ZWRITEENABLE, D3DZB_FALSE, RenderStateArgs);
+	RenderState->SetVertexShader(VertexShader->ShaderHandle, false);
+	RenderState->SetPixelShader(PixelShader->ShaderHandle, false);
+	Device->SetFVF(FrameFVF);
+	TheShaderManager->CreateFrameVertex(width, height, &TextureShaderVertex);
+	Device->SetStreamSource(0, TextureShaderVertex, 0, sizeof(FrameVS));
+	Device->SetTexture(0, SampledTexture);
+	Device->SetRenderTarget(0, DestinationSurface);
+
+	// Pass constant values to the shader
+	PixelShader->SetCT();
+
+	// draw call to execute the shader
+	Device->BeginScene();
+	Device->DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2);
+	Device->EndScene();
+}
