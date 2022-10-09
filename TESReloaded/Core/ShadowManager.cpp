@@ -796,44 +796,34 @@ float ShadowManager::lerp(float a, float b, float t) {
 * Filters the Shadow Map of given index using a 2 pass gaussian blur
 */
 void ShadowManager::BlurShadowMap(ShadowMapTypeEnum ShadowMapType) {
-    IDirect3DDevice9* Device = TheRenderManager->device;
-    NiDX9RenderState* RenderState = TheRenderManager->renderState;
     IDirect3DTexture9* SourceShadowMap = TheTextureManager->ShadowMapTexture[ShadowMapType];
     IDirect3DSurface9* TargetShadowMap = TheTextureManager->ShadowMapSurfaceBlurred[ShadowMapType];
 	IDirect3DTexture9* BlurredShadowTexture = TheTextureManager->ShadowMapTextureBlurred[ShadowMapType];
+	float ShadowMapSize = TheSettingManager->SettingsShadows.Exteriors.ShadowMapResolution;
 
-    Device->SetDepthStencilSurface(NULL);
-    RenderState->SetRenderState(D3DRS_ZENABLE, D3DZB_FALSE, RenderStateArgs);
-    RenderState->SetRenderState(D3DRS_ZWRITEENABLE, D3DZB_FALSE, RenderStateArgs);
-    RenderState->SetVertexShader(ShadowMapBlurVertex->ShaderHandle, false);
-    RenderState->SetPixelShader(ShadowMapBlurPixel->ShaderHandle, false);
-	Device->SetFVF(FrameFVF);
-	Device->SetStreamSource(0, BlurShadowVertex[ShadowMapType], 0, sizeof(FrameVS));
-	Device->SetTexture(0, SourceShadowMap);
-	Device->SetRenderTarget(0, TargetShadowMap);
-	
 	// Pass map resolution to shader as a constant
-	ShadowMapBlurPixel->SetCT();
 	D3DXVECTOR4 inverseRes = { ShadowMapInverseResolution[ShadowMapType], ShadowMapInverseResolution[ShadowMapType], 0.0f, 0.0f };
 	ShadowMapBlurPixel->SetShaderConstantF(0, &inverseRes, 1);
 
 	// blur in two passes, vertically and horizontally
-	D3DXVECTOR4 Blur[2] = {
-		D3DXVECTOR4(1.0f, 0.0f, 0.0f, 0.0f),
-		D3DXVECTOR4(0.0f, 1.0f, 0.0f, 0.0f),
-	};
+	ShadowMapBlurPixel->SetShaderConstantF(1, &D3DXVECTOR4(1.0f, 0.0f, 0.0f, 0.0f), 1);
+	TheShaderManager->ApplyShaderToTexture(BlurredShadowTexture, 
+		TargetShadowMap, 
+		SourceShadowMap, 
+		ShadowMapSize, 
+		ShadowMapSize, 
+		ShadowMapBlurVertex, 
+		ShadowMapBlurPixel
+	);
 
-	for (int i = 0; i < 2; i++) {
-		// set blur direction shader constants
-		ShadowMapBlurPixel->SetShaderConstantF(1, &Blur[i], 1);
-
-		// draw call to execute the shader
-		Device->BeginScene();
-		Device->DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2);
-		Device->EndScene();
-
-		// move texture to render device for next pass
-		Device->SetTexture(0, BlurredShadowTexture);
-	}
+	ShadowMapBlurPixel->SetShaderConstantF(1, &D3DXVECTOR4(0.0f, 1.0f, 0.0f, 0.0f), 1);
+	TheShaderManager->ApplyShaderToTexture(BlurredShadowTexture,
+		TargetShadowMap,
+		BlurredShadowTexture,
+		ShadowMapSize,
+		ShadowMapSize,
+		ShadowMapBlurVertex,
+		ShadowMapBlurPixel
+	);
 }
 
