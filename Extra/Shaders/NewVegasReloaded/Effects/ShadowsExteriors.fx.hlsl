@@ -15,6 +15,8 @@ float4 TESR_SunAmount;
 float4 TESR_FogColor;
 float4 TESR_ShadowFade;
 float4 TESR_ReciprocalResolution; //inverse of shadow map resolution
+float4 TESR_SunDirection;
+//float4 TESR_ReciprocalResolution; //inverse of shadow map resolution
 float4 TESR_ShadowRadius; // radius of the 4 cascades
 float4 TESR_FogDistance; // x: fog start, y: fog end, z: weather percentage, w: sun glare
 
@@ -33,6 +35,10 @@ static const float Zdiff = farZ - nearZ;
 static const float DARKNESS = TESR_ShadowData.y;
 static const float MIN_VARIANCE = 0.000005;
 static const float BLEED_CORRECTION = 0.4;
+static const float SSS_DIST = 0.0002;
+static const float SSS_STEPNUM = 25;
+static const float SSS_THICKNESS = 2;
+static const float SSS_MAXDEPTH = 10000;
 
 struct VSOUT
 {
@@ -57,6 +63,7 @@ VSOUT FrameVS(VSIN IN)
 
 float readDepth(in float2 coord : TEXCOORD0)
 {
+	// unpack linear depth to real depth
 	float posZ = tex2D(TESR_DepthBuffer, coord).x;
 	posZ = nearZ * farZ / ((posZ * (farZ - nearZ)) - farZ);
 	return posZ;
@@ -213,6 +220,28 @@ float4 Desaturate(float4 input)
 	return float4(greyscale, greyscale, greyscale, input.a);
 }
 
+float GetLightAmountScreenSpace(float4 pos)
+{	
+	// calculates wether a point is in shadow based on screen depth
+	//float4 lightDirection = mul(TESR_SunDirection, TESR_WorldViewProjectionTransform);
+	float stepSize = SSS_DIST/SSS_STEPNUM;
+	float4 step = TESR_SunDirection * stepSize;
+	float4 world_pos = pos;
+
+	for (float i = 0; i < SSS_STEPNUM; i++){
+		world_pos -= step; // we move to the light
+		float4 screen_pos = ScreenCoordToTexCoord(mul(world_pos, TESR_WorldViewProjectionTransform));
+		
+		if (screen_pos.x > 0 && screen_pos.x < 1.0 && screen_pos.y > 0 && screen_pos.y <1){
+		float depth = screen_pos.z * screen_pos.w;
+		float depthCompare = readDepth(screen_pos.xy);
+		float depthDelta = depthCompare - depth;
+
+		if (depthDelta > 0 && depthDelta < SSS_THICKNESS ) return 0.0; // in shadow
+		}
+	}
+	return 1.0f;
+}
 
 float4 Shadow(VSOUT IN) : COLOR0
 {
@@ -229,6 +258,9 @@ float4 Shadow(VSOUT IN) : COLOR0
 		float4 pos = mul(world_pos, TESR_WorldViewProjectionTransform);
 
 		Shadow = saturate(GetLightAmount(pos, depth));
+		if (Shadow > 0.0){
+			Shadow = min(Shadow, GetLightAmountScreenSpace(world_pos));
+		}
 
 		// fade shadows to light when sun is low
 		if (TESR_ShadowFade.x > 0.0f) 
