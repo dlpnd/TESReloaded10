@@ -6,6 +6,8 @@ float4x4 TESR_ProjectionTransform;
 float4 TESR_ReciprocalResolution;
 float4 TESR_AmbientOcclusionAOData;
 float4 TESR_AmbientOcclusionData;
+float4 TESR_DepthConstants;
+float4 TESR_CameraData;
 float4 TESR_FogData;
 
 sampler2D TESR_RenderedBuffer : register(s0) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
@@ -14,10 +16,13 @@ sampler2D TESR_SourceBuffer : register(s2) = sampler_state { ADDRESSU = CLAMP; A
 
 static const int samples = 5;
 static const int rings = 2;
-static const float nearZ = TESR_ProjectionTransform._43 / TESR_ProjectionTransform._33;
-static const float farZ = (TESR_ProjectionTransform._33 * nearZ) / (TESR_ProjectionTransform._33 - 1.0f);
-static const float2 g_InvFocalLen = { tan(0.5 * radians(TESR_ReciprocalResolution.w)) * (1.0f / TESR_ReciprocalResolution.z), tan(0.5 * radians(TESR_ReciprocalResolution.w)) };
-static const float depthRange = nearZ - farZ;
+static const float nearZ = TESR_CameraData.x;
+static const float farZ = TESR_CameraData.y;
+static const float aspectRatio = TESR_CameraData.z;
+static const float fov = TESR_CameraData.w;
+static const float Zmul = TESR_DepthConstants.z;
+static const float Zdiff = TESR_DepthConstants.w;
+static const float depthRange = TESR_DepthConstants.w;
 static const float depthConstant = depthRange / 20000;
 static const float aoMultiplier = 500.0;
 static const float angleBiasRadians = radians(TESR_AmbientOcclusionData.x);
@@ -80,6 +85,12 @@ VSOUT FrameVS(VSIN IN)
 	return OUT;
 }
  
+// from https://gist.github.com/keijiro/ee7bc388272548396870
+float nrand(float2 uv)
+{
+    return frac(sin(dot(uv, float2(12.9898, 78.233))) * 43758.5453);
+}
+
 float2 rand(in float2 uv)
 {
 	float noiseX = frac(sin(dot(uv ,float2(12.9898, 78.233))) * 43758.5453);
@@ -90,16 +101,22 @@ float2 rand(in float2 uv)
 float readDepth(in float2 coord : TEXCOORD0)
 {
 	float posZ = tex2D(TESR_DepthBuffer, coord).x;
-	return (2.0f * nearZ) / (nearZ + farZ - posZ * (farZ - nearZ));
+	float a = farZ / Zdiff;
+	float b = -Zmul/Zdiff;
+	posZ = b/(posZ - a);
+
+	return posZ;
 }
  
-float3 getPosition(in float2 uv, in float eye_z)
+float3 getPosition(in float2 uv)
 {
-   uv = (uv * float2(2.0, -2.0) - float2(1.0, -1.0));
-   float3 pos = float3(uv * g_InvFocalLen * eye_z, eye_z );
-   return pos;
+    float eye_z = readDepth(uv);
+
+    uv = (uv * float2(2.0, -2.0) - float2(1.0, -1.0));
+    float3 pos = float3(uv * g_InvFocalLen * eye_z, eye_z );
+    return pos;
 }
- 
+
 float2 packDepth(float depth)
 {
     return float2(depth, frac(depth * 255.0 - 0.5));
@@ -121,11 +138,137 @@ float compareDepths(float depth1, float depth2)
  
 	return float(ao);
 }
+
+float3 reconstructPositionFromFOV(float2 uv){
+	float3 position = float3(uv*2.0f-1.0f, readDepth(uv));
+	position.xy *= position.z * (radians(fov*0.5));
+	position.x *= aspectRatio;
+
+	return position;
+}
+
+
+float3 projectPositionFromFOV(float3 position){
+	float2 screenCoords = position.xy;
+	screenCoords /= radians(fov*0.5);
+	screenCoords.x /= aspectRatio;
+	screenCoords /= position.z;
+	
+	return float3(screenCoords * 0.5 + 0.5, 1.0);
+}
+
+float3 reconstructPositionFromMatrix(float2 uv){	
+	float x = uv.x * 2.0f - 1.0f;
+	float y = uv.y * -2.0f + 1.0f;
+	float z = readDepth(uv);
+
+	float4 screenpos = float4(x, y, z, 1.0f);
+	float4 viewpos = mul(screenpos, TESR_RealInvProjectionTransform);
+	viewpos.xyz /= viewpos.w;
+	return viewpos;
+}
+
+
+float3 reconstructPosition(float2 uv)
+{
+	return reconstructPositionFromFOV(uv);
+
+	return reconstructPositionFromMatrix(uv);
+}
+
+
+float3 projectPosition(float3 position){
+
+	return projectPositionFromFOV(position);
+
+	float4 projection = mul(float4 (position, 1.0), TESR_RealProjectionTransform);
+	projection.xyz /= projection.w;
+	projection.x = projection.x * 0.5 + 0.5;
+	projection.y = 0.5 + 0.5 * projection.y;
+
+	return projection;
+}
+
+float3 GetNormal( float2 coord)
+{
+	float2 uv = coord; // center
+	float2 uv1 = uv + float2(1, 0) * TESR_ReciprocalResolution.x; // right 
+	float2 uv2 = uv + float2(0, 1) * TESR_ReciprocalResolution.y; // top
+
+	float3 P0 = reconstructPosition(uv);
+	float3 P1 = reconstructPosition(uv1);
+	float3 P2 = reconstructPosition(uv2);
+
+	return normalize(cross(P2 - P0, P1 - P0));
+}
+
+
+float4 SSAO(VSOUT IN) : COLOR0
+{
+	float2 coord = IN.UVCoord;
+	float3 origin = reconstructPosition(coord);
+	float3 screenSpaceSample = projectPosition (origin);
+	float sampleDepth = readDepth(screenSpaceSample.xy);
+	float depth = readDepth(coord);
+	float3 normal = GetNormal(coord);
+
+	uint kernelSize = 12;
+	float3 kernel[12];
+	float uRadius = 300;
+
+	for (uint i = 0; i < kernelSize; ++i) {
+		// generate random samples in a unit sphere
+		kernel[i] = float3 (nrand(float2(-1.0f, 1.0f)), nrand(float2(-1.0f, 1.0f)), nrand(float2(0.0f, 1.0f)));
+		normalize(kernel[i]);
+
+		//randomize points distance to sphere center, making them more concentrated towards the center
+		kernel[i] *= nrand(float2(0.0f, 1.0f)); 
+		float scale = float(i) / float(kernelSize);
+		scale = lerp(0.1f, 1.0f, scale * scale);
+		kernel[i] *= scale; 
+	}
+
+	float3 rvec = float3(rand(coord), rand(coord).x);
+	float3 tangent = normalize(rvec - normal * dot(rvec, normal));
+	float3 bitangent = cross(normal, tangent);
+
+	//reorient our sample kernel along the origin's normal
+	float3x3 tbn = float3x3(tangent, bitangent, normal);
+
+	// calculate occlusion
+	float occlusion = 0.0;
+	for (i = 0; i < kernelSize; ++i) {
+		// get sample positions around origin:
+		float3 samplePoint = mul(kernel[i], tbn) * uRadius;
+		samplePoint += origin;
+		
+		// project sample position:
+		float3 screenSpaceSample = projectPosition (samplePoint);
+
+		// get depth from depthbuffer at sample position:
+		float sampleDepth = readDepth(screenSpaceSample.xy);
+		
+		// get sample point actual depth
+		float actualDepth = samplePoint.z;
+
+		// range check & accumulate:
+		float rangeCheck= abs(actualDepth - sampleDepth) < uRadius ? 1.0 : 0.0;
+		occlusion += (sampleDepth < actualDepth ? 1.0 : 0.0) * rangeCheck;
+	}
+
+	occlusion = 1.0 - (occlusion / kernelSize);
+
+	return float4(occlusion, occlusion, occlusion, 1.0);
+}
+
+
+
+
  
 float4 AOPass(VSOUT IN) : COLOR0
 {
 	float depth = readDepth(IN.UVCoord);
-	float3 pos = getPosition(IN.UVCoord, depth);
+	float3 pos = getPosition(IN.UVCoord);
 	float depthPos = depth * depthRange;
 	float dx = normalize(ddx(pos)).z * g_InvFocalLen.x;
 	float dy = normalize(ddy(pos)).z * g_InvFocalLen.y;
@@ -227,20 +370,25 @@ technique
 	pass
 	{
 		VertexShader = compile vs_3_0 FrameVS();
-		PixelShader = compile ps_3_0 AOPass();
+		PixelShader = compile ps_3_0 SSAO();
 	}
+	// pass
+	// {
+	// 	VertexShader = compile vs_3_0 FrameVS();
+	// 	PixelShader = compile ps_3_0 AOPass();
+	// }
 	
-	pass
-	{ 
-		VertexShader = compile vs_3_0 FrameVS();
-		PixelShader = compile ps_3_0 BlurPS(OffsetMaskH);
-	}
+	// pass
+	// { 
+	// 	VertexShader = compile vs_3_0 FrameVS();
+	// 	PixelShader = compile ps_3_0 BlurPS(OffsetMaskH);
+	// }
 	
-	pass
-	{ 
-		VertexShader = compile vs_3_0 FrameVS();
-		PixelShader = compile ps_3_0 BlurPS(OffsetMaskV);
-	}
+	// pass
+	// { 
+	// 	VertexShader = compile vs_3_0 FrameVS();
+	// 	PixelShader = compile ps_3_0 BlurPS(OffsetMaskV);
+	// }
 	
 	pass
 	{
