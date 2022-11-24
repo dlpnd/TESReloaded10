@@ -31,6 +31,7 @@ static const float2 texelSize = float2(TESR_ReciprocalResolution.x, TESR_Recipro
 static const float2 OffsetMaskH = float2(1.0f, 0.0f);
 static const float2 OffsetMaskV = float2(0.0f, 1.0f);
 static const int cKernelSize = 12;
+static const int maxDepthRender = 12500;
 
 static const int samples = 5;
 static const int rings = 2;
@@ -326,7 +327,7 @@ float4 SSAO(VSOUT IN) : COLOR0
 
 	occlusion = 1.0 - (occlusion / kernelSize);
 
-	occlusion = lerp(occlusion, 1.0, invLerp(0.0, 12000, origin.z));
+	occlusion = lerp(occlusion, 1.0, invLerp(0.0, maxDepthRender, origin.z));
 
 	return float4(occlusion * occlusion, packDepth(origin.z), 1.0);
 }
@@ -425,6 +426,7 @@ float4 blur(VSOUT IN, uniform float2 OffsetMask) : COLOR0
 	ao = ao * WeightSum;
 
 	float depth = readDepth(IN.UVCoord);
+	if (depth > maxDepthRender) return float4 (1.0, 1.0, 1.0, 1.0);
 
     for (uint i = 0; i < cKernelSize; i++){
 		float2 uvOff = (BlurOffsets[i] * OffsetMask);
