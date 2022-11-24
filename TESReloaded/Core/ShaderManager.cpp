@@ -89,6 +89,10 @@ void ShaderProgram::SetConstantTableValue(LPCSTR Name, UInt32 Index) {
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.ReciprocalResolution;
 	else if (!strcmp(Name, "TESR_CameraForward"))
 		FloatShaderValues[Index].Value = &TheRenderManager->CameraForward;
+	else if (!strcmp(Name, "TESR_DepthConstants"))
+		FloatShaderValues[Index].Value = &TheRenderManager->DepthConstants;
+	else if (!strcmp(Name, "TESR_CameraData"))
+		FloatShaderValues[Index].Value = &TheRenderManager->CameraData;
 	else if (!strcmp(Name, "TESR_CameraPosition"))
 		FloatShaderValues[Index].Value = &TheRenderManager->CameraPosition;
 	else if (!strcmp(Name, "TESR_SunDirection"))

@@ -90,6 +90,10 @@ void RenderManager::SetupSceneCamera() {
 		float TmB = Frustum->Top - Frustum->Bottom;
 		float TpB = Frustum->Top + Frustum->Bottom;
 		float InvFmN = 1.0f / (Frustum->Far - Frustum->Near);
+		float Far = Frustum->Far * InvFmN;
+
+		float FrustumWidth = Frustum->Right - Frustum->Left;
+		float FrustumHeight = Frustum->Top - Frustum->Bottom;
 
 		memcpy(Pointers::Generic::CameraWorldTranslate, WorldTranslate, 0x0C);
 
@@ -103,7 +107,7 @@ void RenderManager::SetupSceneCamera() {
 		Right.y = WorldRotate->data[1][2];
 		Right.z = WorldRotate->data[2][2];
 
-		// We set up the world matrix always to default (image space) because we use it only in image space shaders
+		// world translation
 		worldMatrix._11 = 1.0f;
 		worldMatrix._12 = 0.0f;
 		worldMatrix._13 = 0.0f;
@@ -167,11 +171,11 @@ void RenderManager::SetupSceneCamera() {
 		projMatrix._24 = 0.0f;
 		projMatrix._31 = -RpL / RmL;
 		projMatrix._32 = -TpB / TmB;
-		projMatrix._33 = Frustum->Far * InvFmN;
+		projMatrix._33 = Far;
 		projMatrix._34 = 1.0f;
 		projMatrix._41 = 0.0f;
 		projMatrix._42 = 0.0f;
-		projMatrix._43 = -(Frustum->Near * Frustum->Far * InvFmN);
+		projMatrix._43 = -(Frustum->Near * Far);
 		projMatrix._44 = 0.0f;
 
 		WorldViewProjMatrix = worldMatrix * viewMatrix * projMatrix;
@@ -185,6 +189,17 @@ void RenderManager::SetupSceneCamera() {
 		CameraPosition.x = WorldTranslate->x;
 		CameraPosition.y = WorldTranslate->y;
 		CameraPosition.z = WorldTranslate->z;
+
+		// depth reconstruction constants
+		DepthConstants.x = Frustum->Near; //NearZ: TESR_ProjectionTransform._43 / TESR_ProjectionTransform._33
+		DepthConstants.y = Frustum->Far; // FarZ: (TESR_ProjectionTransform._33 * nearZ) / (TESR_ProjectionTransform._33 - 1.0f);
+		DepthConstants.z = DepthConstants.x * DepthConstants.y; // Zmult
+		DepthConstants.w = DepthConstants.y - DepthConstants.x; // Zdiff
+
+		CameraData.x = Frustum->Near;
+		CameraData.y = Frustum->Far;
+		CameraData.z = FrustumWidth / FrustumHeight;
+		CameraData.w = WorldSceneGraph->cameraFOV;
 	}
 
 }
