@@ -14,6 +14,7 @@ float4 TESR_FogDistance;
 sampler2D TESR_RenderedBuffer : register(s0) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_DepthBuffer : register(s1) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_SourceBuffer : register(s2) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
+sampler2D TESR_NoiseSampler : register(s3) < string ResourceName = "Effects\noise.dds"; > = sampler_state { ADDRESSU = WRAP; ADDRESSV = WRAP; MAGFILTER = NONE; MINFILTER = NONE; MIPFILTER = NONE; };
 
 static const float nearZ = TESR_CameraData.x;
 static const float farZ = TESR_CameraData.y;
@@ -32,8 +33,6 @@ static const float AOlumThreshold = TESR_AmbientOcclusionData.y;
 static const float AOblurDrop = TESR_AmbientOcclusionData.z;
 static const float AOblurRadius = TESR_AmbientOcclusionData.w;
 static const float2 texelSize = float2(TESR_ReciprocalResolution.x, TESR_ReciprocalResolution.y);
-static const float2 OffsetMaskH = float2(1.0f, 0.0f);
-static const float2 OffsetMaskV = float2(0.0f, 1.0f);
 static const int cKernelSize = 12;
 static const int startFade = 2000;
 static const int endFade = 8000;
@@ -90,11 +89,11 @@ VSOUT FrameVS(VSIN IN)
 	return OUT;
 }
  
-// from https://gist.github.com/keijiro/ee7bc388272548396870
-// returns a semi random float between 0 and 1 based on the given seed.
-float random(float2 seed)
+// returns a semi random float3 between 0 and 1 based on the given seed.
+// tailored to return a different value for each uv coord of the screen.
+float3 random(float2 seed)
 {
-    return frac(sin(dot(seed, float2(12.9898, 78.233))) * 43758.5453);
+	return tex2D(TESR_NoiseSampler, (seed/255 + 0.5) / texelSize).xyz;
 }
 
 // returns a value from 0 to 1 based on the positions of a value between a min/max 
@@ -204,21 +203,21 @@ float4 SSAO(VSOUT IN) : COLOR0
 {
 	float2 coord = IN.UVCoord;
 
+	// return float4(random(coord), 1.0);
+
 	// generate the sampling kernel with random points in a hemisphere
 	// #define size 16
-	uint kernelSize = 24;
+	uint kernelSize = AOradius;
 	float3 kernel[32]; // max supported kernel size is 32 samples
-	float uRadius = 80;
+	float uRadius = AOrange;
 
 	for (uint i = 0; i < kernelSize; ++i) {
-		// generate random samples in a unit sphere
-		// kernel[i] = float3 (nrand(float2(-1.0f, 1.0f)), nrand(float2(-1.0f, 1.0f)), nrand(float2(-1.0f, 1.0f)));
-		float rand = random(coord * i);
-		kernel[i] = float3 (random(coord * i * rand) * 2 - 1 , random(coord * -0.02 * i * rand) * 2 - 1 , random(coord * 0.03 * i * rand) );
+		// generate random samples in a unit sphere (random vector coordinates from -1 to 1);
+		kernel[i] = random(coord * i) * 2 - 1;
 		normalize(kernel[i]);
 
 		//randomize points distance to sphere center, making them more concentrated towards the center
-		kernel[i] *= random(float2(rand, -1.0 * rand)); 
+		kernel[i] *= random(coord * i * 2).x;
 		float scale = 1 - float(i) / float(kernelSize);
 		scale = lerp(0.3f, 1.0f, scale * scale);
 		kernel[i] *= scale; 
@@ -332,13 +331,13 @@ technique
 	pass
 	{ 
 		VertexShader = compile vs_3_0 FrameVS();
-		PixelShader = compile ps_3_0 BlurPS(OffsetMaskH);
+		PixelShader = compile ps_3_0 BlurPS(float2(1.0f, 0.0f));
 	}
 	
 	pass
 	{ 
 		VertexShader = compile vs_3_0 FrameVS();
-		PixelShader = compile ps_3_0 BlurPS(OffsetMaskV);
+		PixelShader = compile ps_3_0 BlurPS(float2(0.0f, 1.0f));
 	}
 	
 	pass
