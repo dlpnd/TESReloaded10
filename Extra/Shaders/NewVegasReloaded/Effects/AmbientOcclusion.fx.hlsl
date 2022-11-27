@@ -25,6 +25,9 @@ static const float farZ = TESR_CameraData.y;
 static const float aspectRatio = TESR_CameraData.z;
 static const float fov = TESR_CameraData.w;
 static const float depthRange = farZ - nearZ;
+static const float halfFOV = radians(fov*0.5);
+static const float Q = farZ/(farZ - nearZ);
+
 
 static const float oldNearZ = TESR_DepthConstants.x;
 static const float oldFarZ = TESR_DepthConstants.y;
@@ -108,9 +111,10 @@ VSOUT FrameVS(VSIN IN)
 }
  
 // from https://gist.github.com/keijiro/ee7bc388272548396870
-float nrand(float2 uv)
+// returns a semi random float between 0 and 1 based on the given seed.
+float random(float2 seed)
 {
-    return frac(sin(dot(uv, float2(12.9898, 78.233))) * 43758.5453);
+    return frac(sin(dot(seed, float2(12.9898, 78.233))) * 43758.5453);
 }
 
 float2 rand(in float2 uv)
@@ -134,15 +138,14 @@ float invLerp(float from, float to, float value){
  
 float readDepth(in float2 coord : TEXCOORD0)
 {
-	float Depth = tex2D(TESR_DepthBuffer, coord).x;
-    float ViewZ = TESR_RealProjectionTransform[3][2] / (2 * Depth -1 - TESR_RealProjectionTransform[2][2]);
+	float Depth = tex2D(TESR_DepthBuffer, coord).x; //* 2.0f - 1.0f;
+    float ViewZ = (-nearZ *Q) / (Depth - Q);
 	return ViewZ;
 }
  
 float3 getPosition(in float2 uv)
 {
     float eye_z = oldReadDepth(uv);
-
     uv = (uv * float2(2.0, -2.0) - float2(1.0, -1.0));
     float3 pos = float3(uv * g_InvFocalLen * eye_z, eye_z );
     return pos;
@@ -151,7 +154,7 @@ float3 getPosition(in float2 uv)
 
 float3 reconstructPositionFromFOV(float2 uv){
 	float3 position = float3(uv*2.0f-1.0f, readDepth(uv));
-	position.xy *= position.z * (radians(fov*0.5));
+	position.xy *= position.z * halfFOV;
 	position.x *= aspectRatio;
 
 	return position;
@@ -159,7 +162,7 @@ float3 reconstructPositionFromFOV(float2 uv){
 
 float3 projectPositionFromFOV(float3 position){
 	float2 screenCoords = position.xy;
-	screenCoords /= radians(fov*0.5);
+	screenCoords /= halfFOV;
 	screenCoords.x /= aspectRatio;
 	screenCoords /= position.z;
 	
@@ -168,14 +171,11 @@ float3 projectPositionFromFOV(float3 position){
 
 float3 reconstructPositionFromMatrix(float2 uv)
 {
-	float x = uv.x * 2.0f - 1.0f;
-	float y = uv.y * -2.0f + 1.0f;
-	float z = tex2D(TESR_DepthBuffer, uv).x * 2.0f - 1.0f;
-
-	float4 screenpos = float4(x, y, z, 1.0f);
+	//float4 screenpos = float4(uv, tex2D(TESR_DepthBuffer, uv).x, 1.0f) * 2.0 - 1.0f;
+	float4 screenpos = float4(uv * 2.0 - 1.0f, tex2D(TESR_DepthBuffer, uv).x, 1.0f);
+	screenpos.y = -screenpos.y;
 	float4 viewpos = mul(screenpos, TESR_RealInvProjectionTransform);
 	viewpos.xyz /= viewpos.w;
-
 	return viewpos.xyz;
 }
 
@@ -190,15 +190,15 @@ float3 projectPositionFromMatrix(float3 position){
 
 float3 reconstructPosition(float2 uv)
 {
-	// return reconstructPositionFromFOV(uv);
 	return reconstructPositionFromMatrix(uv);
+	// return reconstructPositionFromFOV(uv);
 }
 
 
 float3 projectPosition(float3 position)
 {
-	// return projectPositionFromFOV(position);
 	return projectPositionFromMatrix(position);
+	// return projectPositionFromFOV(position);
 }
 
 
@@ -261,7 +261,8 @@ float3 GetNormal( float2 coord)
 	half3 vDeriv = ve.x < ve.y ? down : up;
 
 	// get view space normal from the cross product of the best derivatives
-	half3 viewNormal = normalize(cross(hDeriv, vDeriv));
+	// half3 viewNormal = normalize(cross(hDeriv, vDeriv));
+	half3 viewNormal = normalize(cross(vDeriv, hDeriv));
 
 	return viewNormal;
 }
@@ -278,22 +279,22 @@ float4 SSAO(VSOUT IN) : COLOR0
 	float2 coord = IN.UVCoord;
 
 	// generate the sampling kernel with random points in a hemisphere
-	#define size 20
-	uint kernelSize = size;
-	float3 kernel[size];
-	float uRadius = 30;
+	// #define size 16
+	uint kernelSize = 32;
+	float3 kernel[32]; // max supported kernel size is 32 samples
+	float uRadius = 60;
 
 	for (uint i = 0; i < kernelSize; ++i) {
 		// generate random samples in a unit sphere
 		// kernel[i] = float3 (nrand(float2(-1.0f, 1.0f)), nrand(float2(-1.0f, 1.0f)), nrand(float2(-1.0f, 1.0f)));
-		float rand = nrand(coord * i);
-		kernel[i] = float3 (nrand(coord * i * rand) * 2 - 1 , nrand(coord * -0.02 * i * rand) * 2 - 1 , nrand(coord * 0.03 * i * rand) );
+		float rand = random(coord * i);
+		kernel[i] = float3 (random(coord * i * rand) * 2 - 1 , random(coord * -0.02 * i * rand) * 2 - 1 , random(coord * 0.03 * i * rand) );
 		normalize(kernel[i]);
 
 		//randomize points distance to sphere center, making them more concentrated towards the center
-		kernel[i] *= nrand(float2(rand, -1.0 * rand)); 
-		float scale = float(i) / float(kernelSize);
-		scale = lerp(0.1f, 1.0f, scale * scale);
+		kernel[i] *= random(float2(rand, -1.0 * rand)); 
+		float scale = 1 - float(i) / float(kernelSize);
+		scale = lerp(0.3f, 1.0f, scale * scale);
 		kernel[i] *= scale; 
 	}
 
@@ -313,9 +314,10 @@ float4 SSAO(VSOUT IN) : COLOR0
 
 	for (i = 0; i < kernelSize; ++i) {
 		// get sample positions around origin:
-		float3 samplePoint = mul(kernel[i], tbn) * uRadius + origin;
 		// if (dot(normal, kernel[i]) < 0.0) kernel[i] *= -1.0;
 		// float3 samplePoint = origin + kernel[i] * uRadius;
+		if (dot(normal, kernel[i]) < 0.0) kernel[i] *= -1.0;
+		float3 samplePoint = origin + kernel[i] * uRadius;
 		
 		// compare depth of the projected sample with the value from depthbuffer
 		float3 screenSpaceSample = projectPosition (samplePoint);
@@ -328,7 +330,11 @@ float4 SSAO(VSOUT IN) : COLOR0
 		float influence = (sampleDepth < actualDepth ? 1.0 : 0.0 ) * rangeCheck;
 
 		if (influence){
-			influence = 1.0 - distance /uRadius;
+			if ( i < kernelSize / 4) {
+				influence = 1.0 - distance * distance/(uRadius * uRadius);
+			} else {
+				influence = 1.0 - distance /uRadius;
+			}
 			occlusion += influence;
 		}
 	}
@@ -345,6 +351,7 @@ float4 SSAO(VSOUT IN) : COLOR0
 
 
 
+ 
 float unpackDepth(float2 depth)
 {
     return depth.x + ((depth.y - 0.5) / 255.0);
