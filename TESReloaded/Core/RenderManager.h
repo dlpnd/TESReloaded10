@@ -11,9 +11,11 @@ public:
 	void				CheckAndTakeScreenShot(IDirect3DSurface9* RenderTarget);
     float               GetObjectDistance(NiBound* Bound);
 	D3DXMATRIX			WorldViewProjMatrix;
+	D3DXMATRIX			realProjMatrix;
 	D3DXMATRIX			ViewProjMatrix;
 	D3DXMATRIX			InvViewProjMatrix;
 	D3DXMATRIX			InvProjMatrix;
+	D3DXMATRIX			InvRealProjMatrix;
 	D3DXMATRIX			InvViewMatrix;
 	D3DXVECTOR4			CameraData;
 	D3DXVECTOR4			CameraForward;
