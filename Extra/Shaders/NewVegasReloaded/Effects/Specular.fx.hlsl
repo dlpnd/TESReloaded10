@@ -74,6 +74,13 @@ VSOUT FrameVS(VSIN IN)
 	return OUT;
 }
  
+
+
+// returns a value from 0 to 1 based on the positions of a value between a min/max 
+float invLerp(float from, float to, float value){
+  return (value - from) / (to - from);
+}
+ 
 float readDepth(in float2 coord : TEXCOORD0)
 {
 	float Depth = tex2D(TESR_DepthBuffer, coord).x;;
@@ -88,6 +95,15 @@ float3 reconstructPosition(float2 uv)
 	float4 viewpos = mul(screenpos, TESR_InvProjectionTransform);
 	viewpos.xyz /= viewpos.w;
 	return viewpos.xyz;
+}
+
+float3 projectPosition(float3 position){
+	float4 projection = mul(float4 (position, 1.0), TESR_RealProjectionTransform);
+	projection.xyz /= projection.w;
+	projection.x = projection.x * 0.5 + 0.5;
+	projection.y = 0.5 - 0.5 * projection.y;
+
+	return projection.xyz;
 }
 
 float3 GetNormal( float2 uv)
@@ -150,6 +166,9 @@ float4 Desaturate(float4 input)
 	return float4(greyscale, greyscale, greyscale, input.a);
 }
 
+float fogCoeff(float depth){
+	return clamp(invLerp(TESR_FogDistance.x, TESR_FogDistance.y, depth), 0.0, 1.0) / TESR_FogDistance.z;
+}
 
 float4 specularHighlight( VSOUT IN) : COLOR0
 {
