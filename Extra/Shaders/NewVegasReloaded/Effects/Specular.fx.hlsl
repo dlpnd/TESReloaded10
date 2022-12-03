@@ -73,7 +73,6 @@ VSOUT FrameVS(VSIN IN)
 	OUT.UVCoord = IN.UVCoord;
 	return OUT;
 }
- 
 
 
 // returns a value from 0 to 1 based on the positions of a value between a min/max 
@@ -166,9 +165,6 @@ float4 Desaturate(float4 input)
 	return float4(greyscale, greyscale, greyscale, input.a);
 }
 
-float fogCoeff(float depth){
-	return clamp(invLerp(TESR_FogDistance.x, TESR_FogDistance.y, depth), 0.0, 1.0) / TESR_FogDistance.z;
-}
 
 float4 specularHighlight( VSOUT IN) : COLOR0
 {
