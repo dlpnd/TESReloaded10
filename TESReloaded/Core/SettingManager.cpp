@@ -456,6 +456,7 @@ void SettingManager::LoadSettings() {
 	SettingsMain.Effects.Precipitations = GetSettingI("Shaders.Precipitations.Status", "Enabled");
 	SettingsMain.Effects.ShadowsExteriors = GetSettingI("Shaders.ShadowsExteriors.Status", "PostProcess");
 	SettingsMain.Effects.ShadowsInteriors = GetSettingI("Shaders.ShadowsInteriors.Status", "PostProcess");
+	SettingsMain.Effects.Specular = GetSettingI("Shaders.Specular.Status", "Enabled");
 	SettingsMain.Effects.Extra = GetSettingI("Shaders.ExtraEffects.Status", "Enabled");
 
 	strcpy(SettingsMain.Menu.TextFont, GetSettingS("Main.Menu.Style", "TextFont", Value));

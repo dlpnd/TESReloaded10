@@ -171,6 +171,7 @@ void RenderManager::SetupSceneCamera() {
 		invViewMatrix._44 = 1.0f;
 
 		InvViewMatrix = invViewMatrix;
+		ViewMatrix = viewMatrix;
 
 		projMatrix._11 = 2.0f / FrustumWidth;
 		projMatrix._12 = 0.0f;
@@ -206,7 +207,8 @@ void RenderManager::SetupSceneCamera() {
 		realProjMatrix._43 = -Q*nearZ;
 		realProjMatrix._44 = 0.0f;
 
-		WorldViewProjMatrix = worldMatrix * viewMatrix * realProjMatrix;
+		WorldViewMatrix = worldMatrix * viewMatrix;
+		WorldViewProjMatrix = WorldViewMatrix * realProjMatrix;
 		ViewProjMatrix = viewMatrix * realProjMatrix;
 		D3DXMatrixInverse(&InvProjMatrix, NULL, &realProjMatrix);
 		D3DXMatrixInverse(&InvRealProjMatrix, NULL, &realProjMatrix);
