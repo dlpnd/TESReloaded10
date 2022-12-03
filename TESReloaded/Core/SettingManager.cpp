@@ -753,6 +753,13 @@ void SettingManager::LoadSettings() {
 	SettingsPrecipitations.SnowAccumulation.BlurNormDropThreshhold = GetSettingF("Shaders.Precipitations.SnowAccumulation", "BlurNormDropThreshhold");
 	SettingsPrecipitations.SnowAccumulation.BlurRadiusMultiplier = GetSettingF("Shaders.Precipitations.SnowAccumulation", "BlurRadiusMultiplier");
 
+	// Generic Specular effect settings
+
+	SettingsSpecular.Strength = GetSettingF("Shaders.Specular.Main", "Strength");
+	SettingsSpecular.BlurMultiplier = GetSettingF("Shaders.Specular.Main", "BlurMultiplier");
+	SettingsSpecular.Glossiness = GetSettingF("Shaders.Specular.Main", "Glossiness");
+	SettingsSpecular.DistanceFade = GetSettingF("Shaders.Specular.Main", "DistanceFade");
+
 	// Generic exterior shadows settings
 	SettingsShadows.Exteriors.Enabled = GetSettingI("Shaders.ShadowsExteriors.Main", "Enabled");
 	SettingsShadows.Exteriors.Quality = GetSettingI("Shaders.ShadowsExteriors.Main", "Quality");
@@ -1325,6 +1332,8 @@ bool SettingManager::GetMenuShaderEnabled(const char* Name) {
 		Value = SettingsMain.Effects.ShadowsInteriors;
 	else if (!strcmp(Name, "Sharpening"))
 		Value = SettingsMain.Effects.Sharpening;
+	else if (!strcmp(Name, "Specular"))
+		Value = SettingsMain.Effects.Specular;
 	else if (!strcmp(Name, "Skin"))
 		Value = SettingsMain.Shaders.Skin;
 	else if (!strcmp(Name, "SnowAccumulation"))
