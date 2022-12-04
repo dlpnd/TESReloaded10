@@ -7,8 +7,6 @@ float4x4 TESR_InvProjectionTransform;
 float4 TESR_ReciprocalResolution;
 float4 TESR_AmbientOcclusionAOData;
 float4 TESR_AmbientOcclusionData;
-float4 TESR_DepthConstants;
-float4 TESR_CameraData;
 float4 TESR_FogDistance; // x: fog start, y: fog end, z: weather percentage, w: sun glare
 float4 TESR_FogColor;
 
@@ -17,58 +15,16 @@ sampler2D TESR_DepthBuffer : register(s1) = sampler_state { ADDRESSU = CLAMP; AD
 sampler2D TESR_SourceBuffer : register(s2) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_NoiseSampler : register(s3) < string ResourceName = "Effects\noise.dds"; > = sampler_state { ADDRESSU = WRAP; ADDRESSV = WRAP; MAGFILTER = NONE; MINFILTER = NONE; MIPFILTER = NONE; };
 
-static const float nearZ = TESR_CameraData.x;
-static const float farZ = TESR_CameraData.y;
-static const float aspectRatio = TESR_CameraData.z;
-static const float fov = TESR_CameraData.w;
-static const float depthRange = farZ - nearZ;
-static const float halfFOV = radians(fov*0.5);
-static const float Q = farZ/(farZ - nearZ);
-
 static const float AOsamples = TESR_AmbientOcclusionAOData.x;
 static const float AOstrength = TESR_AmbientOcclusionAOData.y;
 static const float AOclamp = TESR_AmbientOcclusionAOData.z;
 static const float AOrange = TESR_AmbientOcclusionAOData.w;
 static const float AOangleBias = TESR_AmbientOcclusionData.x;
 static const float AOlumThreshold = TESR_AmbientOcclusionData.y;
-static const float AOblurDrop = TESR_AmbientOcclusionData.z;
-static const float AOblurRadius = TESR_AmbientOcclusionData.w;
-static const float2 texelSize = float2(TESR_ReciprocalResolution.x, TESR_ReciprocalResolution.y);
-static const int cKernelSize = 12;
+static const float blurDrop = TESR_AmbientOcclusionData.z;
+static const float blurRadius = TESR_AmbientOcclusionData.w;
 static const int startFade = 2000;
 static const int endFade = 8000;
-
-static const float BlurWeights[cKernelSize] = 
-{
-	0.057424882f,
-	0.058107773f,
-	0.061460144f,
-	0.071020611f,
-	0.088092873f,
-	0.106530916f,
-	0.106530916f,
-	0.088092873f,
-	0.071020611f,
-	0.061460144f,
-	0.058107773f,
-	0.057424882f
-};
- 
-static const float2 BlurOffsets[cKernelSize] = 
-{
-	float2(-6.0f * TESR_ReciprocalResolution.x, -6.0f * TESR_ReciprocalResolution.y),
-	float2(-5.0f * TESR_ReciprocalResolution.x, -5.0f * TESR_ReciprocalResolution.y),
-	float2(-4.0f * TESR_ReciprocalResolution.x, -4.0f * TESR_ReciprocalResolution.y),
-	float2(-3.0f * TESR_ReciprocalResolution.x, -3.0f * TESR_ReciprocalResolution.y),
-	float2(-2.0f * TESR_ReciprocalResolution.x, -2.0f * TESR_ReciprocalResolution.y),
-	float2(-1.0f * TESR_ReciprocalResolution.x, -1.0f * TESR_ReciprocalResolution.y),
-	float2( 1.0f * TESR_ReciprocalResolution.x,  1.0f * TESR_ReciprocalResolution.y),
-	float2( 2.0f * TESR_ReciprocalResolution.x,  2.0f * TESR_ReciprocalResolution.y),
-	float2( 3.0f * TESR_ReciprocalResolution.x,  3.0f * TESR_ReciprocalResolution.y),
-	float2( 4.0f * TESR_ReciprocalResolution.x,  4.0f * TESR_ReciprocalResolution.y),
-	float2( 5.0f * TESR_ReciprocalResolution.x,  5.0f * TESR_ReciprocalResolution.y),
-	float2( 6.0f * TESR_ReciprocalResolution.x,  6.0f * TESR_ReciprocalResolution.y)
-};
  
 struct VSOUT
 {
@@ -90,6 +46,10 @@ VSOUT FrameVS(VSIN IN)
 	return OUT;
 }
  
+#include "Includes/Depth.hlsl"
+#include "Includes/Blur.hlsl"
+
+static const float2 texelSize = TESR_ReciprocalResolution.xy;
 
 // returns a semi random float3 between 0 and 1 based on the given seed.
 // tailored to return a different value for each uv coord of the screen.
@@ -101,32 +61,6 @@ float3 random(float2 seed)
 // returns a value from 0 to 1 based on the positions of a value between a min/max 
 float invLerp(float from, float to, float value){
   return (value - from) / (to - from);
-}
- 
-float readDepth(in float2 coord : TEXCOORD0)
-{
-	float Depth = tex2D(TESR_DepthBuffer, coord).x;;
-    float ViewZ = (-nearZ *Q) / (Depth - Q);
-	return ViewZ;
-}
-
-
-float3 reconstructPosition(float2 uv)
-{
-	float4 screenpos = float4(uv * 2.0 - 1.0f, tex2D(TESR_DepthBuffer, uv).x, 1.0f);
-	screenpos.y = -screenpos.y;
-	float4 viewpos = mul(screenpos, TESR_InvProjectionTransform);
-	viewpos.xyz /= viewpos.w;
-	return viewpos.xyz;
-}
-
-float3 projectPosition(float3 position){
-	float4 projection = mul(float4 (position, 1.0), TESR_ProjectionTransform);
-	projection.xyz /= projection.w;
-	projection.x = projection.x * 0.5 + 0.5;
-	projection.y = 0.5 - 0.5 * projection.y;
-
-	return projection.xyz;
 }
 
 float3 GetNormal( float2 uv)
@@ -237,7 +171,8 @@ float4 SSAO(VSOUT IN) : COLOR0
 	float occlusion = 0.0;
 	for (i = 0; i < kernelSize; ++i) {
 		// get sample positions around origin:
-		if (dot(normal, kernel[i]) < 0.0) kernel[i] *= -1.0; // if our sample vector goes inside the geometry, we flip it
+		// if (dot(normal, kernel[i]) < 0.0) kernel[i] *= -1.0; // if our sample vector goes inside the geometry, we flip it
+		kernel[i] *= dot(normal, kernel[i]) < 0.0 ? -1.0 : 1.0; // if our sample vector goes inside the geometry, we flip it
 		float3 samplePoint = origin + kernel[i] * uRadius;
 		
 		// compare depth of the projected sample with the value from depthbuffer
@@ -250,15 +185,9 @@ float4 SSAO(VSOUT IN) : COLOR0
 		float rangeCheck = distance < uRadius ? 1.0 : 0.0;
 		float influence = (sampleDepth < actualDepth ? 1.0 : 0.0 ) * rangeCheck;
 
-		if (influence){
-			if ( i < kernelSize / 4) {
-				// stronger strength curve in close vectors
-				influence = 1.0 - distance * distance/(uRadius * uRadius);
-			} else {
-				influence = 1.0 - distance /uRadius;
-			}
-			occlusion += influence;
-		}
+		// stronger strength curve in close vectors (replacing an if statement with a lerp)
+		influence *= lerp(1.0 - distance * distance/(uRadius * uRadius), 1.0 - distance /uRadius, i < kernelSize / 4);
+		occlusion += influence;
 	}
 	
 	occlusion = 1.0 - occlusion/kernelSize * AOstrength;
@@ -266,42 +195,13 @@ float4 SSAO(VSOUT IN) : COLOR0
 	float fogColor = Desaturate(TESR_FogColor).x;
 	float darkness = clamp(lerp(occlusion, fogColor, fogCoeff(origin.z)), occlusion, 1.0);
 
+
 	if (origin.z > startFade){
 		darkness = lerp(darkness, 1.0, saturate(invLerp(0.0, endFade, origin.z)));
 	}
+	// darkness = lerp(darkness, 1.0, saturate(invLerp(startFade, endFade, origin.z)));
 
 	return float4(darkness, packDepth(origin.z), 1.0);
-}
-
- 
-// perform depth aware 12 taps blur along the direction of the offsetmask
-float4 BlurPS(VSOUT IN, uniform float2 OffsetMask) : COLOR0
-{
-	float WeightSum = 0.114725602f;
-	float4 ao = tex2D(TESR_RenderedBuffer, IN.UVCoord);
-	ao.r = ao.r * WeightSum;
-
-	// float Depth1 = unpackDepth(ao.gb);
-	float Depth1 = readDepth(IN.UVCoord);
-	clip(endFade - Depth1);
-
-	int i = 0;
-    for (i = 0; i < cKernelSize; i++)
-    {
-		float2 uvOff = (BlurOffsets[i] * OffsetMask) * AOblurRadius;
-		float4 Color = tex2D(TESR_RenderedBuffer, IN.UVCoord + uvOff);
-		float Depth2 = readDepth(IN.UVCoord + uvOff);
-		// float Depth2 = unpackDepth(Color.gb);
-		float diff = abs(float(Depth1 - Depth2));
- 
-		if(diff <= AOblurDrop)
-		{
-			ao.r += BlurWeights[i] * Color.r;
-			WeightSum += BlurWeights[i];
-		}
-    }
-	ao.r /= WeightSum;
-    return ao;
 }
 
 
@@ -342,13 +242,13 @@ technique
 	pass
 	{ 
 		VertexShader = compile vs_3_0 FrameVS();
-		PixelShader = compile ps_3_0 BlurPS(float2(1.0f, 0.0f));
+		PixelShader = compile ps_3_0 BlurRChannel(float2(1.0f, 0.0f), blurRadius, blurDrop, endFade);
 	}
 	
 	pass
 	{ 
 		VertexShader = compile vs_3_0 FrameVS();
-		PixelShader = compile ps_3_0 BlurPS(float2(0.0f, 1.0f));
+		PixelShader = compile ps_3_0 BlurRChannel(float2(0.0f, 1.0f), blurRadius, blurDrop, endFade);
 	}
 	
 	pass
