@@ -8,37 +8,33 @@ float4x4 TESR_ShadowCameraToLightTransformNear;
 float4x4 TESR_ShadowCameraToLightTransformMiddle;
 float4x4 TESR_ShadowCameraToLightTransformFar;
 float4x4 TESR_ShadowCameraToLightTransformLod;
+float4 TESR_ScreenSpaceLightDir;
 float4 TESR_CameraPosition;
 float4 TESR_WaterSettings;
 float4 TESR_ShadowData; // x: quality, y: darkness, z: nearmap resolution, w: farmap resolution
 float4 TESR_SunAmount;
 float4 TESR_FogColor;
 float4 TESR_ShadowFade;
-float4 TESR_ReciprocalResolution; //inverse of shadow map resolution
 float4 TESR_SunDirection;
-//float4 TESR_ReciprocalResolution; //inverse of shadow map resolution
 float4 TESR_ShadowRadius; // radius of the 4 cascades
 float4 TESR_FogDistance; // x: fog start, y: fog end, z: weather percentage, w: sun glare
 
 sampler2D TESR_RenderedBuffer : register(s0) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
-sampler2D TESR_DepthBuffer : register(s1) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
+sampler2D TESR_DepthBuffer : register(s1) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = ANISOTROPIC; MIPFILTER = LINEAR; };
 sampler2D TESR_ShadowMapBufferNear : register(s2) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = ANISOTROPIC; MIPFILTER = LINEAR; };
 sampler2D TESR_ShadowMapBufferMiddle : register(s3) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = ANISOTROPIC; MIPFILTER = LINEAR; };
 sampler2D TESR_ShadowMapBufferFar : register(s4) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = ANISOTROPIC; MIPFILTER = LINEAR; };
 sampler2D TESR_ShadowMapBufferLod : register(s5) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = ANISOTROPIC; MIPFILTER = LINEAR; };
 sampler2D TESR_SourceBuffer : register(s6) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
+sampler2D TESR_NoiseSampler : register(s7) < string ResourceName = "Effects\noise.dds"; > = sampler_state { ADDRESSU = WRAP; ADDRESSV = WRAP; MAGFILTER = NONE; MINFILTER = NONE; MIPFILTER = NONE; };
 
-static const float nearZ = TESR_ProjectionTransform._43 / TESR_ProjectionTransform._33;
-static const float farZ = (TESR_ProjectionTransform._33 * nearZ) / (TESR_ProjectionTransform._33 - 1.0f);
-static const float Zmul = nearZ * farZ;
-static const float Zdiff = farZ - nearZ;
 static const float DARKNESS = TESR_ShadowData.y;
 static const float MIN_VARIANCE = 0.000005;
 static const float BLEED_CORRECTION = 0.4;
-static const float SSS_DIST = 0.0002;
+static const float SSS_DIST = 0.5;
 static const float SSS_STEPNUM = 25;
-static const float SSS_THICKNESS = 2;
-static const float SSS_MAXDEPTH = 10000;
+static const float SSS_THICKNESS = 5;
+static const float SSS_MAXDEPTH = 2000;
 
 struct VSOUT
 {
@@ -53,6 +49,10 @@ struct VSIN
 	float2 UVCoord : TEXCOORD0;
 };
 
+
+#include "Includes/Depth.hlsl"
+#include "Includes/Blur.hlsl"
+
 VSOUT FrameVS(VSIN IN)
 {
 	VSOUT OUT = (VSOUT)0.0f;
@@ -61,7 +61,7 @@ VSOUT FrameVS(VSIN IN)
 	return OUT;
 }
 
-float readDepth(in float2 coord : TEXCOORD0)
+float readDepth2(in float2 coord : TEXCOORD0)
 {
 	// unpack linear depth to real depth
 	float posZ = tex2D(TESR_DepthBuffer, coord).x;
@@ -100,7 +100,7 @@ float4 ChebyshevUpperBound(float2 moments, float distance)
 }
 
 float4 ScreenCoordToTexCoord(float4 coord){
-	// apply perspective and convert from -1/1 (perspective division) to range to 0/1 (shadowMap range);
+	// apply perspective (perspective division) and convert from -1/1 to range to 0/1 (shadowMap range);
 	coord.xyz /= coord.w;
 	coord.x = coord.x * 0.5f + 0.5f;
 	coord.y = coord.y * -0.5f + 0.5f;
@@ -220,24 +220,56 @@ float4 Desaturate(float4 input)
 	return float4(greyscale, greyscale, greyscale, input.a);
 }
 
-float GetLightAmountScreenSpace(float4 pos)
+// function to generate growing samples for screen space shadows ray march
+// uniform float raymarch_max_dist = SSS_DIST;
+// uniform int raymarch_max_iter = SSS_STEPNUM;
+// uniform int raymarch_num_bins = SSS_STEPNUM;
+
+// int calc_ray_march_iters(float d) {
+//     float bin_delta_d = raymarch_max_dist / raymarch_num_bins;
+
+//     // Chunk d into bins such that the output is centered on x^2
+//     float d_rounded = d + bin_delta_d/4;
+//     d_rounded = floor(d_rounded);
+//     d_rounded = d_rounded * bin_delta_d + bin_delta_d/4;
+    
+//     // Square the distance and scale to max out at raymarch_max_iter
+//     float max_raw_iters = raymarch_max_dist * raymarch_max_dist;
+//     float raw_iters = saturate(d_rounded * (d_rounded / max_raw_iters));
+//     return int(raw_iters * raymarch_max_iter);
+// }
+
+// returns a semi random float3 between 0 and 1 based on the given seed.
+// tailored to return a different value for each uv coord of the screen.
+float3 random(float2 seed)
+{
+	return tex2D(TESR_NoiseSampler, (seed/255 + 0.5) / TESR_ReciprocalResolution.xy).xyz;
+}
+
+float4 ScreenSpaceShadow(VSOUT IN) : COLOR0
 {	
 	// calculates wether a point is in shadow based on screen depth
-	//float4 lightDirection = mul(TESR_SunDirection, TESR_WorldViewProjectionTransform);
-	float stepSize = SSS_DIST/SSS_STEPNUM;
-	float4 step = TESR_SunDirection * stepSize;
-	float4 world_pos = pos;
+	float2 uv = IN.UVCoord;
+	float rand = lerp(0.9, 1.1, (random(uv).r * 2 - 1)); // some noise to vary the ray length
+	float3 pos = reconstructPosition(uv);
 
-	for (float i = 0; i < SSS_STEPNUM; i++){
-		world_pos -= step; // we move to the light
-		float4 screen_pos = ScreenCoordToTexCoord(mul(world_pos, TESR_WorldViewProjectionTransform));
+	if (pos.z > SSS_MAXDEPTH) return 1.0f;
+
+	for (float i = 1; i < SSS_STEPNUM; i++){
+
+		float4 step = SSS_DIST / SSS_STEPNUM * i * i * TESR_ScreenSpaceLightDir * rand;
+
+		pos += step; // we move to the light
+		float3 screen_pos = projectPosition(pos.xyz);
 		
 		if (screen_pos.x > 0 && screen_pos.x < 1.0 && screen_pos.y > 0 && screen_pos.y <1){
-		float depth = screen_pos.z * screen_pos.w;
-		float depthCompare = readDepth(screen_pos.xy);
-		float depthDelta = depthCompare - depth;
+			float depth = pos.z;
+			float depthCompare = readDepth(screen_pos.xy);
 
-		if (depthDelta > 0 && depthDelta < SSS_THICKNESS ) return 0.0; // in shadow
+			float depthDelta = depth - depthCompare;
+
+			if (depthDelta > 0 && depthDelta < SSS_THICKNESS )
+				return lerp(0, 1.0, invLerp(0, SSS_MAXDEPTH, pos.z)); // in shadow
 		}
 	}
 	return 1.0f;
@@ -256,17 +288,13 @@ float4 Shadow(VSOUT IN) : COLOR0
 	// check if surface is above water
 	if (world_pos.z > TESR_WaterSettings.x) {
 		float4 pos = mul(world_pos, TESR_WorldViewProjectionTransform);
-
 		Shadow = saturate(GetLightAmount(pos, depth));
-		if (Shadow > 0.0){
-			Shadow = min(Shadow, GetLightAmountScreenSpace(world_pos));
-		}
+		Shadow = min(tex2D(TESR_RenderedBuffer, IN.UVCoord).r, Shadow);
 
 		// fade shadows to light when sun is low
-		if (TESR_ShadowFade.x > 0.0f) 
-			Shadow = lerp(Shadow, 1.0f, TESR_ShadowFade.x);
+		Shadow = lerp(Shadow, 1.0f, TESR_ShadowFade.x);
 
-		// calculate fog impact
+		// // calculate fog impact
 		float fog = fogCoeff(depth);
 		float fogColor = Desaturate(TESR_FogColor).x;
 		float darkness = clamp(lerp(DARKNESS, TESR_FogColor.x, fog), DARKNESS, 1.0);
@@ -322,8 +350,27 @@ technique {
 
 	pass {
 		VertexShader = compile vs_3_0 FrameVS();
+		PixelShader = compile ps_3_0 ScreenSpaceShadow();
+	}
+
+	pass
+	{ 
+		VertexShader = compile vs_3_0 FrameVS();
+		PixelShader = compile ps_3_0 BlurRChannel(float2(1.0f, 0.0f), 1.5, 5, SSS_MAXDEPTH);
+	}
+	
+	pass
+	{ 
+		VertexShader = compile vs_3_0 FrameVS();
+		PixelShader = compile ps_3_0 BlurRChannel(float2(0.0f, 1.0f), 1.5, 5, SSS_MAXDEPTH);
+	}
+
+	pass {
+		VertexShader = compile vs_3_0 FrameVS();
 		PixelShader = compile ps_3_0 Shadow();
 	}
+
+
 
 //	pass {
 //		VertexShader = compile vs_3_0 FrameVS();
