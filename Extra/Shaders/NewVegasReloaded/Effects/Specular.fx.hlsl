@@ -1,58 +1,16 @@
 // Specular multiplier fullscreen shader for Oblivion/Skyrim Reloaded
 
-float4x4 TESR_RealProjectionTransform;
-float4x4 TESR_RealInvProjectionTransform;
-float4 TESR_ReciprocalResolution;
 float4 TESR_SpecularData;					// x: strength, y:blurMultiplier, z:glossiness, w:drawDistance
-float4 TESR_CameraData;  					// x: nearZ, y: farZ, z: aspect ratio, w: fov
 float4 TESR_ScreenSpaceLightDir;
 
 sampler2D TESR_RenderedBuffer : register(s0) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_DepthBuffer : register(s1) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_SourceBuffer : register(s2) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 
-static const float nearZ = TESR_CameraData.x;
-static const float farZ = TESR_CameraData.y;
-static const float Q = farZ/(farZ - nearZ);
-
 static const float Strength = TESR_SpecularData.x;
 static const float BlurRadius = TESR_SpecularData.y;
 static const float Glossiness = TESR_SpecularData.z;
 static const float DrawDistance = TESR_SpecularData.w;
-static const float2 texelSize = float2(TESR_ReciprocalResolution.x, TESR_ReciprocalResolution.y);
-static const int cKernelSize = 12;
-
-static const float BlurWeights[cKernelSize] = 
-{
-	0.057424882f,
-	0.058107773f,
-	0.061460144f,
-	0.071020611f,
-	0.088092873f,
-	0.106530916f,
-	0.106530916f,
-	0.088092873f,
-	0.071020611f,
-	0.061460144f,
-	0.058107773f,
-	0.057424882f
-};
- 
-static const float2 BlurOffsets[cKernelSize] = 
-{
-	float2(-6.0f * TESR_ReciprocalResolution.x, -6.0f * TESR_ReciprocalResolution.y),
-	float2(-5.0f * TESR_ReciprocalResolution.x, -5.0f * TESR_ReciprocalResolution.y),
-	float2(-4.0f * TESR_ReciprocalResolution.x, -4.0f * TESR_ReciprocalResolution.y),
-	float2(-3.0f * TESR_ReciprocalResolution.x, -3.0f * TESR_ReciprocalResolution.y),
-	float2(-2.0f * TESR_ReciprocalResolution.x, -2.0f * TESR_ReciprocalResolution.y),
-	float2(-1.0f * TESR_ReciprocalResolution.x, -1.0f * TESR_ReciprocalResolution.y),
-	float2( 1.0f * TESR_ReciprocalResolution.x,  1.0f * TESR_ReciprocalResolution.y),
-	float2( 2.0f * TESR_ReciprocalResolution.x,  2.0f * TESR_ReciprocalResolution.y),
-	float2( 3.0f * TESR_ReciprocalResolution.x,  3.0f * TESR_ReciprocalResolution.y),
-	float2( 4.0f * TESR_ReciprocalResolution.x,  4.0f * TESR_ReciprocalResolution.y),
-	float2( 5.0f * TESR_ReciprocalResolution.x,  5.0f * TESR_ReciprocalResolution.y),
-	float2( 6.0f * TESR_ReciprocalResolution.x,  6.0f * TESR_ReciprocalResolution.y)
-};
  
 struct VSOUT
 {
@@ -73,22 +31,12 @@ VSOUT FrameVS(VSIN IN)
 	OUT.UVCoord = IN.UVCoord;
 	return OUT;
 }
- 
-float readDepth(in float2 coord : TEXCOORD0)
-{
-	float Depth = tex2D(TESR_DepthBuffer, coord).x;;
-    float ViewZ = (-nearZ *Q) / (Depth - Q);
-	return ViewZ;
-}
 
-float3 reconstructPosition(float2 uv)
-{
-	float4 screenpos = float4(uv * 2.0 - 1.0f, tex2D(TESR_DepthBuffer, uv).x, 1.0f);
-	screenpos.y = -screenpos.y;
-	float4 viewpos = mul(screenpos, TESR_RealInvProjectionTransform);
-	viewpos.xyz /= viewpos.w;
-	return viewpos.xyz;
-}
+#include "Includes/Depth.hlsl"
+#include "Includes/Blur.hlsl"
+
+static const float2 texelSize = float2(TESR_ReciprocalResolution.x, TESR_ReciprocalResolution.y);
+
 
 float3 GetNormal( float2 uv)
 {
@@ -173,36 +121,6 @@ float4 specularHighlight( VSOUT IN) : COLOR0
 }
 
 
-// perform depth aware 12 taps blur along the direction of the offsetmask
-float4 BlurPS(VSOUT IN, uniform float2 OffsetMask) : COLOR0
-{
-	float WeightSum = 0.114725602f;
-	float4 color1 = tex2D(TESR_RenderedBuffer, IN.UVCoord);
-	color1.r = color1.r * WeightSum;
-
-	float depth1 = readDepth(IN.UVCoord);
-	clip(DrawDistance - depth1); //don't process pixels further away than effect fade distance
-
-	int i = 0;
-    for (i = 0; i < cKernelSize; i++)
-    {
-		float2 uvOff = (BlurOffsets[i] * OffsetMask) * BlurRadius;
-		float4 color2 = tex2D(TESR_RenderedBuffer, IN.UVCoord + uvOff);
-		float depth2 = readDepth(IN.UVCoord + uvOff);
-		float diff = abs(float(depth1 - depth2));
- 
-		// only factor it pixels that are close in terms of depth
-		if(diff <= 1)
-		{
-			color1.r += BlurWeights[i] * color2.r;
-			WeightSum += BlurWeights[i];
-		}
-    }
-	color1.r /= WeightSum;
-    return color1.rrrr;
-}
-
-
 float4 CombineSpecular(VSOUT IN) :COLOR0
 {
 	float4 color = tex2D(TESR_SourceBuffer, IN.UVCoord);
@@ -229,13 +147,13 @@ technique
 	pass
 	{ 
 		VertexShader = compile vs_3_0 FrameVS();
-		PixelShader = compile ps_3_0 BlurPS(float2(1.0f, 0.0f));
+		PixelShader = compile ps_3_0 BlurRChannel(float2(1.0f, 0.0f), BlurRadius, 1, DrawDistance);
 	}
 	
 	pass
 	{ 
 		VertexShader = compile vs_3_0 FrameVS();
-		PixelShader = compile ps_3_0 BlurPS(float2(0.0f, 1.0f));
+		PixelShader = compile ps_3_0 BlurRChannel(float2(0.0f, 1.0f), BlurRadius, 1, DrawDistance);
 	}
 
 	pass
