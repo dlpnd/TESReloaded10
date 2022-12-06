@@ -61,13 +61,6 @@ VSOUT FrameVS(VSIN IN)
 	return OUT;
 }
 
-float readDepth2(in float2 coord : TEXCOORD0)
-{
-	// unpack linear depth to real depth
-	float posZ = tex2D(TESR_DepthBuffer, coord).x;
-	posZ = nearZ * farZ / ((posZ * (farZ - nearZ)) - farZ);
-	return posZ;
-}
 
 float3 toWorld(float2 tex)
 {
@@ -109,28 +102,19 @@ float4 ScreenCoordToTexCoord(float4 coord){
 }
 
 // Exponential Soft Shadow Maps
-float GetLightAmountValueESSM(sampler2D shadowBuffer, float4x4 lightTransform, float4 coord){
-	float4 LightSpaceCoord = ScreenCoordToTexCoord(mul(coord, lightTransform));
-
-	float4 depth = tex2D(shadowBuffer, LightSpaceCoord.xy).x;
-	return exp(-80 * LightSpaceCoord.z) * depth;
+float GetLightAmountValueESSM(float depth, float depthCompare){
+	return exp(-80 * depthCompare) * depth;
 }
 
 // Exponential Shadow Maps
-float GetLightAmountValueESM(sampler2D shadowBuffer, float4x4 lightTransform, float4 coord){
-	float4 LightSpaceCoord = ScreenCoordToTexCoord(mul(coord, lightTransform));
-
-	float4 depth = tex2D(shadowBuffer, LightSpaceCoord.xy).x;
-	return exp(-500 * (LightSpaceCoord.z - depth));
+float GetLightAmountValueESM(float depth, float depthCompare){
+	return exp(-500 * (depthCompare - depth));
 }
 
-float GetLightAmountValueVSM(sampler2D shadowBuffer, float4x4 lightTransform, float4 coord)
+float GetLightAmountValueVSM(float2 moments, float depthCompare)
 {
 	//returns wether the coordinates are in shadow (0), light (1) or penumbra.
-	float4 LightSpaceCoord = ScreenCoordToTexCoord(mul(coord, lightTransform));
-
-	float2 Moments = tex2D(shadowBuffer, LightSpaceCoord.xy).xy;
-	return ChebyshevUpperBound(Moments, LightSpaceCoord.z);
+	return ChebyshevUpperBound(moments, depthCompare);
 }
 
 // returns a value from 0 to 1 based on the positions of a value between a min/max 
@@ -149,68 +133,59 @@ float GetLightAmountValue(sampler2D shadowBuffer, float4x4 lightTransform, float
 	// 2: simple ESM
 	// 3: filtered ESM
 
-	if (TESR_ShadowData.w == 1.0f){
-		return GetLightAmountValueVSM(shadowBuffer, lightTransform, coord);
-	} else if (TESR_ShadowData.w == 2.0f){
-		return GetLightAmountValueESM(shadowBuffer, lightTransform, coord);
-	} else if (TESR_ShadowData.w == 3.0f){
-		return GetLightAmountValueESSM(shadowBuffer, lightTransform, coord);
-	}else {
-		return 1.0f;
-	}
+	float4 LightSpaceCoord = ScreenCoordToTexCoord(mul(coord, lightTransform));
+	float4 shadowBufferValue = tex2D(shadowBuffer, LightSpaceCoord.xy);
+
+	float4 shadowMode = {TESR_ShadowData.w == 1.0f, TESR_ShadowData.w == 2.0f, TESR_ShadowData.w == 3.0f, TESR_ShadowData.w == 4.0f};
+	float4 shadows = {
+		GetLightAmountValueVSM(shadowBufferValue.xy, LightSpaceCoord.z),
+		GetLightAmountValueESM(shadowBufferValue.x, LightSpaceCoord.z),
+		GetLightAmountValueESSM(shadowBufferValue.x, LightSpaceCoord.z),
+		0.0,
+	};
+	return dot(shadows, shadowMode);
 }
 
-float GetLightAmount(float4 coord, float depth)
+float4 GetLightAmount(float4 coord, float depth)
 {
-	float fog = fogCoeff(depth);
-	float shadow;
 	float blendArea = 0.8;
-	float blend;
+	float shadow;
 
-	// check distance to detect far or near shadows, only apply fog to far map
-	if (depth < TESR_ShadowRadius.x * blendArea){
-		return GetLightAmountValue(TESR_ShadowMapBufferNear, TESR_ShadowCameraToLightTransformNear, coord);
-	}
+	// getting all shadow values from cascades as negative (to be able to use the dot product to chose the correct one)
+	float4 shadows = {
+		1 - GetLightAmountValue(TESR_ShadowMapBufferNear, TESR_ShadowCameraToLightTransformNear, coord),
+		1 - GetLightAmountValue(TESR_ShadowMapBufferMiddle, TESR_ShadowCameraToLightTransformMiddle, coord),
+		1 - GetLightAmountValue(TESR_ShadowMapBufferFar, TESR_ShadowCameraToLightTransformFar, coord),
+		1 - GetLightAmountValue(TESR_ShadowMapBufferLod, TESR_ShadowCameraToLightTransformLod, coord),
+	};
 
-	// blend cascade seam
-	if (depth < TESR_ShadowRadius.x){
-		blend = invLerp(blendArea * TESR_ShadowRadius.x, TESR_ShadowRadius.x, depth);
-		shadow = (1-blend) * GetLightAmountValue(TESR_ShadowMapBufferNear, TESR_ShadowCameraToLightTransformNear, coord);
-		shadow += blend * GetLightAmountValue(TESR_ShadowMapBufferMiddle, TESR_ShadowCameraToLightTransformMiddle, coord);
-		return shadow;
-	}
+	float4 cascade = {
+		depth < TESR_ShadowRadius.x,
+		depth >= TESR_ShadowRadius.x * blendArea && depth < TESR_ShadowRadius.y,
+		depth >= TESR_ShadowRadius.y * blendArea && depth < TESR_ShadowRadius.z,
+		depth >= TESR_ShadowRadius.z * blendArea && depth < TESR_ShadowRadius.w,
+	};
 
-	if (depth < TESR_ShadowRadius.y * blendArea){
-		return GetLightAmountValue(TESR_ShadowMapBufferMiddle, TESR_ShadowCameraToLightTransformMiddle, coord);
-	}
+	// calculate blending areas coefficients between cascades
+	float4 fadeIn = {
+		1.0,
+		clamp(0.0, 1.0, invLerp(blendArea * TESR_ShadowRadius.x, TESR_ShadowRadius.x, depth)),
+		clamp(0.0, 1.0, invLerp(blendArea * TESR_ShadowRadius.y, TESR_ShadowRadius.y, depth)),
+		clamp(0.0, 1.0, invLerp(blendArea * TESR_ShadowRadius.z, TESR_ShadowRadius.z, depth)),
+	};
 
-	// blend cascade seam
-	if (depth < TESR_ShadowRadius.y){
-		blend = invLerp(blendArea * TESR_ShadowRadius.y, TESR_ShadowRadius.y, depth);
-		shadow = (1- blend) * GetLightAmountValue(TESR_ShadowMapBufferMiddle, TESR_ShadowCameraToLightTransformMiddle, coord);
-		shadow += blend * GetLightAmountValue(TESR_ShadowMapBufferFar, TESR_ShadowCameraToLightTransformFar, coord);
-		return shadow;
-	}
+	float4 fadeOut = {
+		clamp(0.0, 1.0, 1 - invLerp(blendArea * TESR_ShadowRadius.x, TESR_ShadowRadius.x, depth)),
+		clamp(0.0, 1.0, 1 - invLerp(blendArea * TESR_ShadowRadius.y, TESR_ShadowRadius.y, depth)),
+		clamp(0.0, 1.0, 1 - invLerp(blendArea * TESR_ShadowRadius.z, TESR_ShadowRadius.z, depth)),
+		clamp(0.0, 1.0, 1 - invLerp(TESR_ShadowRadius.z, TESR_ShadowRadius.w, depth)),
+	};
 
+	// apply blending to each cascade shadow
+	shadows *= fadeIn * fadeOut;
 
-	if (depth < TESR_ShadowRadius.z * blendArea){
-		return GetLightAmountValue(TESR_ShadowMapBufferFar, TESR_ShadowCameraToLightTransformFar, coord);// * fog;
-	}
-
-	// blend cascade seam
-	if (depth < TESR_ShadowRadius.z){
-		blend = invLerp(blendArea * TESR_ShadowRadius.z, TESR_ShadowRadius.z, depth);
-		shadow = (1-blend) * GetLightAmountValue(TESR_ShadowMapBufferFar, TESR_ShadowCameraToLightTransformFar, coord);
-		shadow += blend * GetLightAmountValue(TESR_ShadowMapBufferLod, TESR_ShadowCameraToLightTransformLod, coord);
-		return shadow;
-	}
-
-	if (depth < TESR_ShadowRadius.w){
-		blend = invLerp(TESR_ShadowRadius.z, TESR_ShadowRadius.w, depth);
-		return lerp(GetLightAmountValue(TESR_ShadowMapBufferLod, TESR_ShadowCameraToLightTransformLod, coord), 1.0f, blend);// * fog;
-	}
-
-	return 1.0;
+	// filter the shadow based on the current valid cascades
+	return 1 - dot(shadows, cascade);
 }
 
 
@@ -250,29 +225,37 @@ float4 ScreenSpaceShadow(VSOUT IN) : COLOR0
 {	
 	// calculates wether a point is in shadow based on screen depth
 	float2 uv = IN.UVCoord;
-	float rand = lerp(0.9, 1.1, (random(uv).r * 2 - 1)); // some noise to vary the ray length
+	float rand = lerp(0.8, 1.2, random(uv).r); // some noise to vary the ray length
 	float3 pos = reconstructPosition(uv);
 
-	if (pos.z > SSS_MAXDEPTH) return 1.0f;
+	// if (pos.z > SSS_MAXDEPTH) return 1.0f;
 
-	for (float i = 1; i < SSS_STEPNUM; i++){
+	float occlusion = 0.0;
+	for (float i = 1; i < SSS_STEPNUM/2; i++){
 
-		float4 step = SSS_DIST / SSS_STEPNUM * i * i * TESR_ScreenSpaceLightDir * rand;
+		// float4 step = SSS_DIST / SSS_STEPNUM * i * i * TESR_ScreenSpaceLightDir * rand;
+		float4 step = SSS_DIST / SSS_STEPNUM * TESR_ScreenSpaceLightDir;
 
-		pos += step; // we move to the light
-		float3 screen_pos = projectPosition(pos.xyz);
+		float3 pos1 = pos + step.xyz; // we move to the light
+		float3 pos2 = pos1 + step.xyz; // we move to the light
+		float3 screen_pos1 = projectPosition(pos1);
+		float3 screen_pos2 = projectPosition(pos2);
 		
-		if (screen_pos.x > 0 && screen_pos.x < 1.0 && screen_pos.y > 0 && screen_pos.y <1){
-			float depth = pos.z;
-			float depthCompare = readDepth(screen_pos.xy);
+		// if (screen_pos.x > 0 && screen_pos.x < 1.0 && screen_pos.y > 0 && screen_pos.y <1){
+		float2 depth = {pos1.z, pos2.z};
+		float2 depthCompare = {
+			readDepth(screen_pos1.xy),
+			readDepth(screen_pos2.xy),
+		};
 
-			float depthDelta = depth - depthCompare;
+		float2 depthDelta = depth - depthCompare;
 
-			if (depthDelta > 0 && depthDelta < SSS_THICKNESS )
-				return lerp(0, 1.0, invLerp(0, SSS_MAXDEPTH, pos.z)); // in shadow
-		}
+		occlusion += (length(depthDelta) > 0 && length(depthDelta) < SSS_THICKNESS); // in Shadow
+		pos = pos2;
 	}
-	return 1.0f;
+	occlusion = saturate(occlusion);
+
+	return 1.0f - occlusion;
 }
 
 float4 Shadow(VSOUT IN) : COLOR0
@@ -285,23 +268,24 @@ float4 Shadow(VSOUT IN) : COLOR0
 	float3 camera_vector = toWorld(IN.UVCoord) * depth;
 	float4 world_pos = float4(TESR_CameraPosition.xyz + camera_vector, 1.0f);
 
-	// check if surface is above water
-	if (world_pos.z > TESR_WaterSettings.x) {
-		float4 pos = mul(world_pos, TESR_WorldViewProjectionTransform);
-		Shadow = saturate(GetLightAmount(pos, depth));
-		Shadow = min(tex2D(TESR_RenderedBuffer, IN.UVCoord).r, Shadow);
+	float4 pos = mul(world_pos, TESR_WorldViewProjectionTransform);
+	// return GetLightAmount(pos, depth);
 
-		// fade shadows to light when sun is low
-		Shadow = lerp(Shadow, 1.0f, TESR_ShadowFade.x);
+	Shadow = saturate(GetLightAmount(pos, depth));
+	Shadow = min(tex2D(TESR_RenderedBuffer, IN.UVCoord).r, Shadow);
 
-		// // calculate fog impact
-		float fog = fogCoeff(depth);
-		float fogColor = Desaturate(TESR_FogColor).x;
-		float darkness = clamp(lerp(DARKNESS, TESR_FogColor.x, fog), DARKNESS, 1.0);
+	// fade shadows to light when sun is low
+	Shadow = lerp(Shadow, 1.0f, TESR_ShadowFade.x);
 
-		// brighten shadow value from 0 to darkness from config value
-		Shadow = lerp(darkness, 1.0f, Shadow);
-	}
+	// // calculate fog impact
+	float fog = fogCoeff(depth);
+	float fogColor = Desaturate(TESR_FogColor).x;
+	float darkness = clamp(lerp(DARKNESS, TESR_FogColor.x, fog), DARKNESS, 1.0);
+
+	// brighten shadow value from 0 to darkness from config value
+	Shadow = lerp(darkness, 1.0f, Shadow);
+
+	Shadow * (world_pos.z < TESR_WaterSettings.x); // cancel shadow value if under water
 	return float4(Shadow, Shadow, Shadow, 1.0f);
 }
 
