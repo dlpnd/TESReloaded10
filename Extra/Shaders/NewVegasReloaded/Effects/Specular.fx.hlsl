@@ -1,7 +1,5 @@
 // Specular multiplier fullscreen shader for Oblivion/Skyrim Reloaded
 
-float4x4 TESR_ProjectionTransform;
-float4x4 TESR_InvProjectionTransform;
 float4 TESR_ReciprocalResolution;
 float4 TESR_SpecularData;					// x: strength, y:blurMultiplier, z:glossiness, w:drawDistance
 float4 TESR_ScreenSpaceLightDir;
@@ -39,60 +37,6 @@ VSOUT FrameVS(VSIN IN)
 #include "Includes/Blur.hlsl"
 
 static const float2 texelSize = float2(TESR_ReciprocalResolution.x, TESR_ReciprocalResolution.y);
-
-
-float3 GetNormal( float2 uv)
-{
-	// improved normal reconstruction algorithm from 
-	// https://gist.github.com/bgolus/a07ed65602c009d5e2f753826e8078a0
-
-	// store coordinates at 1 and 2 pixels from center in all directions
-	float4 rightUv = uv.xyxy + float4(1.0, 0.0, 2.0, 0.0) * texelSize.xyxy; 
-	float4 leftUv = uv.xyxy + float4(-1.0, 0.0, -2.0, 0.0) * texelSize.xyxy; 
-	float4 bottomUv = uv.xyxy + float4(0.0, 1.0, 0.0, 2.0) * texelSize.xyxy; 
-	float4 topUv =uv.xyxy + float4(0.0, -1.0, 0.0, -2.0) * texelSize.xyxy; 
-
-	float depth = readDepth(uv);
-
-	// get depth values at 1 & 2 pixels offsets from current along the horizontal axis
-	half4 H = half4(
-		readDepth(rightUv.xy),
-		readDepth(leftUv.xy),
-		readDepth(rightUv.zw),
-		readDepth(leftUv.zw)
-	);
-
-	// get depth values at 1 & 2 pixels offsets from current along the vertical axis
-	half4 V = half4(
-		readDepth(topUv.xy),
-		readDepth(bottomUv.xy),
-		readDepth(topUv.zw),
-		readDepth(bottomUv.zw)
-	);
-
-	half2 he = abs((2 * H.xy - H.zw) - depth);
-	half2 ve = abs((2 * V.xy - V.zw) - depth);
-
-	// pick horizontal and vertical diff with the smallest depth difference from slopes
-	float3 centerPoint = reconstructPosition(uv);
-	float3 rightPoint = reconstructPosition(rightUv.xy);
-	float3 leftPoint = reconstructPosition(leftUv.xy);
-	float3 topPoint = reconstructPosition(topUv.xy);
-	float3 bottomPoint = reconstructPosition(bottomUv.xy);
-	float3 left = centerPoint - leftPoint;
-	float3 right = rightPoint - centerPoint;
-	float3 down = centerPoint - bottomPoint;
-	float3 up = topPoint - centerPoint;
-
-	half3 hDeriv = he.x < he.y ? left : right;
-	half3 vDeriv = ve.x < ve.y ? down : up;
-
-	// get view space normal from the cross product of the best derivatives
-	// half3 viewNormal = normalize(cross(hDeriv, vDeriv));
-	half3 viewNormal = normalize(cross(vDeriv, hDeriv));
-
-	return viewNormal;
-}
 
 
 float4 Desaturate(float4 input)

@@ -57,6 +57,8 @@ void ShaderProgram::SetConstantTableValue(LPCSTR Name, UInt32 Index) {
 		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheRenderManager->InvViewProjMatrix;
 	else if (!strcmp(Name, "TESR_ViewProjectionTransform"))
 		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheRenderManager->ViewProjMatrix;
+	else if (!strcmp(Name, "TESR_ViewSpaceLightDir"))
+		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheShaderManager->ShaderConst.ViewSpaceLightDir;
 	else if (!strcmp(Name, "TESR_ScreenSpaceLightDir"))
 		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheShaderManager->ShaderConst.ScreenSpaceLightDir;
 	else if (!strcmp(Name, "TESR_ShadowWorldTransform"))
@@ -784,8 +786,11 @@ void ShaderManager::UpdateConstants() {
 			ShaderConst.SunDir.z = Tes->directionalLight->direction.z * -1;
 
 			// expose the light vector in view space for screen space lighting
-			D3DXVec4Transform(&ShaderConst.ScreenSpaceLightDir, &ShaderConst.SunDir, &TheRenderManager->ViewMatrix);
+			D3DXVec4Transform(&ShaderConst.ScreenSpaceLightDir, &ShaderConst.SunDir, &TheRenderManager->ViewProjMatrix);
 			D3DXVec4Normalize(&ShaderConst.ScreenSpaceLightDir, &ShaderConst.ScreenSpaceLightDir);
+
+			D3DXVec4Transform(&ShaderConst.ViewSpaceLightDir, &ShaderConst.SunDir, &TheRenderManager->ViewMatrix);
+			D3DXVec4Normalize(&ShaderConst.ViewSpaceLightDir, &ShaderConst.ViewSpaceLightDir);
 		}
 
 		// fade shadows at sunrise/sunset

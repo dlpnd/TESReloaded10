@@ -2,11 +2,9 @@
 
 #define viewao 0
 
-float4x4 TESR_ProjectionTransform;
-float4x4 TESR_InvProjectionTransform;
-float4 TESR_ReciprocalResolution;
 float4 TESR_AmbientOcclusionAOData;
 float4 TESR_AmbientOcclusionData;
+float4 TESR_ReciprocalResolution;
 float4 TESR_FogDistance; // x: fog start, y: fog end, z: weather percentage, w: sun glare
 float4 TESR_FogColor;
 
@@ -63,58 +61,6 @@ float invLerp(float from, float to, float value){
   return (value - from) / (to - from);
 }
 
-float3 GetNormal( float2 uv)
-{
-	// improved normal reconstruction algorithm from 
-	// https://gist.github.com/bgolus/a07ed65602c009d5e2f753826e8078a0
-
-	// store coordinates at 1 and 2 pixels from center in all directions
-	float4 rightUv = uv.xyxy + float4(1.0, 0.0, 2.0, 0.0) * texelSize.xyxy; 
-	float4 leftUv = uv.xyxy + float4(-1.0, 0.0, -2.0, 0.0) * texelSize.xyxy; 
-	float4 bottomUv = uv.xyxy + float4(0.0, 1.0, 0.0, 2.0) * texelSize.xyxy; 
-	float4 topUv =uv.xyxy + float4(0.0, -1.0, 0.0, -2.0) * texelSize.xyxy; 
-
-	float depth = readDepth(uv);
-
-	// get depth values at 1 & 2 pixels offsets from current along the horizontal axis
-	half4 H = half4(
-		readDepth(rightUv.xy),
-		readDepth(leftUv.xy),
-		readDepth(rightUv.zw),
-		readDepth(leftUv.zw)
-	);
-
-	// get depth values at 1 & 2 pixels offsets from current along the vertical axis
-	half4 V = half4(
-		readDepth(topUv.xy),
-		readDepth(bottomUv.xy),
-		readDepth(topUv.zw),
-		readDepth(bottomUv.zw)
-	);
-
-	half2 he = abs((2 * H.xy - H.zw) - depth);
-	half2 ve = abs((2 * V.xy - V.zw) - depth);
-
-	// pick horizontal and vertical diff with the smallest depth difference from slopes
-	float3 centerPoint = reconstructPosition(uv);
-	float3 rightPoint = reconstructPosition(rightUv.xy);
-	float3 leftPoint = reconstructPosition(leftUv.xy);
-	float3 topPoint = reconstructPosition(topUv.xy);
-	float3 bottomPoint = reconstructPosition(bottomUv.xy);
-	float3 left = centerPoint - leftPoint;
-	float3 right = rightPoint - centerPoint;
-	float3 down = centerPoint - bottomPoint;
-	float3 up = topPoint - centerPoint;
-
-	half3 hDeriv = he.x < he.y ? left : right;
-	half3 vDeriv = ve.x < ve.y ? down : up;
-
-	// get view space normal from the cross product of the best derivatives
-	// half3 viewNormal = normalize(cross(hDeriv, vDeriv));
-	half3 viewNormal = normalize(cross(vDeriv, hDeriv));
-
-	return viewNormal;
-}
 
 
 float unpackDepth(float2 depth)
@@ -195,10 +141,7 @@ float4 SSAO(VSOUT IN) : COLOR0
 	float fogColor = Desaturate(TESR_FogColor).x;
 	float darkness = clamp(lerp(occlusion, fogColor, fogCoeff(origin.z)), occlusion, 1.0);
 
-
-	if (origin.z > startFade){
-		darkness = lerp(darkness, 1.0, saturate(invLerp(0.0, endFade, origin.z)));
-	}
+	darkness = lerp(darkness, 1.0, saturate(invLerp(0.0, endFade, origin.z)));
 	// darkness = lerp(darkness, 1.0, saturate(invLerp(startFade, endFade, origin.z)));
 
 	return float4(darkness, packDepth(origin.z), 1.0);

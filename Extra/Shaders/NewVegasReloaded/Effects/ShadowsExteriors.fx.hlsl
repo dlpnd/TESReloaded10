@@ -3,11 +3,12 @@
 float4x4 TESR_WorldTransform;
 float4x4 TESR_WorldViewProjectionTransform;
 float4x4 TESR_ViewTransform;
-float4x4 TESR_ProjectionTransform;
 float4x4 TESR_ShadowCameraToLightTransformNear;
 float4x4 TESR_ShadowCameraToLightTransformMiddle;
 float4x4 TESR_ShadowCameraToLightTransformFar;
 float4x4 TESR_ShadowCameraToLightTransformLod;
+float4 TESR_ReciprocalResolution;
+float4 TESR_ViewSpaceLightDir;
 float4 TESR_ScreenSpaceLightDir;
 float4 TESR_CameraPosition;
 float4 TESR_WaterSettings;
@@ -31,10 +32,10 @@ sampler2D TESR_NoiseSampler : register(s7) < string ResourceName = "Effects\nois
 static const float DARKNESS = TESR_ShadowData.y;
 static const float MIN_VARIANCE = 0.000005;
 static const float BLEED_CORRECTION = 0.4;
-static const float SSS_DIST = 0.5;
-static const float SSS_STEPNUM = 25;
-static const float SSS_THICKNESS = 5;
-static const float SSS_MAXDEPTH = 2000;
+static const float SSS_DIST = 20;
+static const float SSS_STEPNUM = 10;
+static const float SSS_THICKNESS = 20;
+static const float SSS_MAXDEPTH = 5000;
 
 struct VSOUT
 {
@@ -49,9 +50,9 @@ struct VSIN
 	float2 UVCoord : TEXCOORD0;
 };
 
-
 #include "Includes/Depth.hlsl"
 #include "Includes/Blur.hlsl"
+#include "Includes/Blending.hlsl"
 
 VSOUT FrameVS(VSIN IN)
 {
@@ -152,6 +153,7 @@ float4 GetLightAmount(float4 coord, float depth)
 	float shadow;
 
 	// getting all shadow values from cascades as negative (to be able to use the dot product to chose the correct one)
+	// shadows are inverted to mean 1 if in shadow to allow dot product filtering
 	float4 shadows = {
 		1 - GetLightAmountValue(TESR_ShadowMapBufferNear, TESR_ShadowCameraToLightTransformNear, coord),
 		1 - GetLightAmountValue(TESR_ShadowMapBufferMiddle, TESR_ShadowCameraToLightTransformMiddle, coord),
@@ -230,11 +232,21 @@ float4 ScreenSpaceShadow(VSOUT IN) : COLOR0
 
 	// if (pos.z > SSS_MAXDEPTH) return 1.0f;
 
+float4 ScreenSpaceShadow(VSOUT IN) : COLOR0
+{	
+	// calculates wether a point is in shadow based on screen depth
+	float2 uv = IN.UVCoord;
+	float rand = lerp(0.2, 1, random(uv).r); // some noise to vary the ray length
+	float3 pos = reconstructPosition(uv) ;//+ GetNormal(uv) * rand; 
+
+	float bias = 0.0;
+	if (pos.z > SSS_MAXDEPTH) return float4 (1.0f, 1.0, 1.0, 1.0) ;
+	
 	float occlusion = 0.0;
 	for (float i = 1; i < SSS_STEPNUM/2; i++){
 
 		// float4 step = SSS_DIST / SSS_STEPNUM * i * i * TESR_ScreenSpaceLightDir * rand;
-		float4 step = SSS_DIST / SSS_STEPNUM * TESR_ScreenSpaceLightDir;
+		float4 step = SSS_DIST / SSS_STEPNUM * i* TESR_ViewSpaceLightDir * rand;
 
 		float3 pos1 = pos + step.xyz; // we move to the light
 		float3 pos2 = pos1 + step.xyz; // we move to the light
@@ -250,12 +262,13 @@ float4 ScreenSpaceShadow(VSOUT IN) : COLOR0
 
 		float2 depthDelta = depth - depthCompare;
 
-		occlusion += (length(depthDelta) > 0 && length(depthDelta) < SSS_THICKNESS); // in Shadow
+		occlusion += depthDelta.x > bias && depthDelta.x < SSS_THICKNESS; // in Shadow
+		occlusion += depthDelta.y > bias && depthDelta.y < SSS_THICKNESS; // in Shadow
 		pos = pos2;
 	}
 	occlusion = saturate(occlusion);
 
-	return 1.0f - occlusion;
+	return lerp(1.0f - occlusion, 1.0, pos.z/SSS_MAXDEPTH);
 }
 
 float4 Shadow(VSOUT IN) : COLOR0
@@ -277,10 +290,10 @@ float4 Shadow(VSOUT IN) : COLOR0
 	// fade shadows to light when sun is low
 	Shadow = lerp(Shadow, 1.0f, TESR_ShadowFade.x);
 
-	// // calculate fog impact
+	// calculate fog impact
 	float fog = fogCoeff(depth);
 	float fogColor = Desaturate(TESR_FogColor).x;
-	float darkness = clamp(lerp(DARKNESS, TESR_FogColor.x, fog), DARKNESS, 1.0);
+	float darkness = clamp(lerp(DARKNESS, fogColor, fog), DARKNESS, 1.0);
 
 	// brighten shadow value from 0 to darkness from config value
 	Shadow = lerp(darkness, 1.0f, Shadow);
@@ -289,27 +302,6 @@ float4 Shadow(VSOUT IN) : COLOR0
 	return float4(Shadow, Shadow, Shadow, 1.0f);
 }
 
-float4 alphaBlend(float4 base, float4 blend)
-{
-	return base*base.a +(1-base.a)*blend;
-}
-
-// photoshop overlay blend mode code from https://www.ryanjuckett.com/photoshop-blend-modes-in-hlsl/
-float BlendMode_Overlay(float base, float blend)
-{
-	return (base <= 0.5f) ? 2.0f*base*blend : 1.0f - 2.0f*(1.0f-base)*(1.0f-blend);
-}
-
-float4 BlendMode_Overlay(float4 base, float4 blend)
-{
-	float4 result = float4(0,0,0,0);
-	result.r = BlendMode_Overlay(base.r, blend.r);
-	result.g = BlendMode_Overlay(base.g, blend.g);
-	result.b = BlendMode_Overlay(base.b, blend.b);
-	result.a = blend.a;
-
-	return alphaBlend(result, base);
-}
 
 float4 CombineShadow( VSOUT IN ) : COLOR0 
 {
@@ -340,13 +332,13 @@ technique {
 	pass
 	{ 
 		VertexShader = compile vs_3_0 FrameVS();
-		PixelShader = compile ps_3_0 BlurRChannel(float2(1.0f, 0.0f), 1.5, 5, SSS_MAXDEPTH);
+		PixelShader = compile ps_3_0 BlurRChannel(float2(1.0f, 0.0f), 1, 5, SSS_MAXDEPTH);
 	}
 	
 	pass
 	{ 
 		VertexShader = compile vs_3_0 FrameVS();
-		PixelShader = compile ps_3_0 BlurRChannel(float2(0.0f, 1.0f), 1.5, 5, SSS_MAXDEPTH);
+		PixelShader = compile ps_3_0 BlurRChannel(float2(0.0f, 1.0f), 1, 5, SSS_MAXDEPTH);
 	}
 
 	pass {
