@@ -223,14 +223,6 @@ float3 random(float2 seed)
 	return tex2D(TESR_NoiseSampler, (seed/255 + 0.5) / TESR_ReciprocalResolution.xy).xyz;
 }
 
-float4 ScreenSpaceShadow(VSOUT IN) : COLOR0
-{	
-	// calculates wether a point is in shadow based on screen depth
-	float2 uv = IN.UVCoord;
-	float rand = lerp(0.8, 1.2, random(uv).r); // some noise to vary the ray length
-	float3 pos = reconstructPosition(uv);
-
-	// if (pos.z > SSS_MAXDEPTH) return 1.0f;
 
 float4 ScreenSpaceShadow(VSOUT IN) : COLOR0
 {	

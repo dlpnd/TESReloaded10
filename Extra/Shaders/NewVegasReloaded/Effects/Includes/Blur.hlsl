@@ -1,4 +1,3 @@
-
 static const int cKernelSize = 12;
 static const float BlurWeights[cKernelSize] = 
 {
