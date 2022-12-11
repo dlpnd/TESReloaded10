@@ -191,11 +191,6 @@ float4 GetLightAmount(float4 coord, float depth)
 }
 
 
-float4 Desaturate(float4 input)
-{
-	float greyscale = input.r * 0.3f + input.g * 0.59f +input.b * 0.11f;
-	return float4(greyscale, greyscale, greyscale, input.a);
-}
 
 // function to generate growing samples for screen space shadows ray march
 // uniform float raymarch_max_dist = SSS_DIST;

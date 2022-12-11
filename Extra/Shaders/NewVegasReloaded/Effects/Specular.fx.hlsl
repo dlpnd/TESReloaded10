@@ -36,9 +36,6 @@ VSOUT FrameVS(VSIN IN)
 #include "Includes/Depth.hlsl"
 #include "Includes/Blur.hlsl"
 
-static const float2 texelSize = float2(TESR_ReciprocalResolution.x, TESR_ReciprocalResolution.y);
-
-
 float4 Desaturate(float4 input)
 {
 	float greyscale = input.r * 0.3f + input.g * 0.59f +input.b * 0.11f;

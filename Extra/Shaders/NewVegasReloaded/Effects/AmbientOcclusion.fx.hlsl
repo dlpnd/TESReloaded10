@@ -47,13 +47,11 @@ VSOUT FrameVS(VSIN IN)
 #include "Includes/Depth.hlsl"
 #include "Includes/Blur.hlsl"
 
-static const float2 texelSize = TESR_ReciprocalResolution.xy;
-
 // returns a semi random float3 between 0 and 1 based on the given seed.
 // tailored to return a different value for each uv coord of the screen.
 float3 random(float2 seed)
 {
-	return tex2D(TESR_NoiseSampler, (seed/255 + 0.5) / texelSize).xyz;
+	return tex2D(TESR_NoiseSampler, (seed/255 + 0.5) / TESR_ReciprocalResolution.xy).xyz;
 }
 
 // returns a value from 0 to 1 based on the positions of a value between a min/max 
@@ -88,7 +86,6 @@ float4 SSAO(VSOUT IN) : COLOR0
 	float2 coord = IN.UVCoord;
 
 	// generate the sampling kernel with random points in a hemisphere
-	// int kernelSize = clamp(int(AOsamples), 0, 8);
 	int kernelSize = 20;
 	float3 kernel[20]; // max supported kernel size is 32 samples
 	float uRadius = abs(AOrange);
@@ -117,7 +114,6 @@ float4 SSAO(VSOUT IN) : COLOR0
 	float occlusion = 0.0;
 	for (i = 0; i < kernelSize; ++i) {
 		// get sample positions around origin:
-		// if (dot(normal, kernel[i]) < 0.0) kernel[i] *= -1.0; // if our sample vector goes inside the geometry, we flip it
 		kernel[i] *= dot(normal, kernel[i]) < 0.0 ? -1.0 : 1.0; // if our sample vector goes inside the geometry, we flip it
 		float3 samplePoint = origin + kernel[i] * uRadius;
 		
