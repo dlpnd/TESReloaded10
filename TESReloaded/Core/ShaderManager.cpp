@@ -784,15 +784,14 @@ void ShaderManager::UpdateConstants() {
 			ShaderConst.SunDir.x = Tes->directionalLight->direction.x * -1;
 			ShaderConst.SunDir.y = Tes->directionalLight->direction.y * -1;
 			ShaderConst.SunDir.z = Tes->directionalLight->direction.z * -1;
-			}
-
-			// expose the light vector in view space for screen space lighting
-			D3DXVec4Transform(&ShaderConst.ScreenSpaceLightDir, &ShaderConst.SunDir, &TheRenderManager->ViewProjMatrix);
-			D3DXVec4Normalize(&ShaderConst.ScreenSpaceLightDir, &ShaderConst.ScreenSpaceLightDir);
-
-			D3DXVec4Transform(&ShaderConst.ViewSpaceLightDir, &ShaderConst.SunDir, &TheRenderManager->ViewMatrix);
-			D3DXVec4Normalize(&ShaderConst.ViewSpaceLightDir, &ShaderConst.ViewSpaceLightDir);
 		}
+
+		// expose the light vector in view space for screen space lighting
+		D3DXVec4Transform(&ShaderConst.ScreenSpaceLightDir, &ShaderConst.SunDir, &TheRenderManager->ViewProjMatrix);
+		D3DXVec4Normalize(&ShaderConst.ScreenSpaceLightDir, &ShaderConst.ScreenSpaceLightDir);
+
+		D3DXVec4Transform(&ShaderConst.ViewSpaceLightDir, &ShaderConst.SunDir, &TheRenderManager->ViewMatrix);
+		D3DXVec4Normalize(&ShaderConst.ViewSpaceLightDir, &ShaderConst.ViewSpaceLightDir);
 
 		// fade shadows at sunrise/sunset
 		float shadowFadeTime = 1.0f;

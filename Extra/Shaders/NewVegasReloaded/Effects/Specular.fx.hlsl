@@ -2,7 +2,7 @@
 
 float4 TESR_ReciprocalResolution;
 float4 TESR_SpecularData;					// x: strength, y:blurMultiplier, z:glossiness, w:drawDistance
-float4 TESR_ScreenSpaceLightDir;
+float4 TESR_ViewSpaceLightDir;
 
 sampler2D TESR_RenderedBuffer : register(s0) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_DepthBuffer : register(s1) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
@@ -52,9 +52,9 @@ float4 specularHighlight( VSOUT IN) : COLOR0
 	//reorient our sample kernel along the origin's normal
 	float3 normal = GetNormal(IN.UVCoord);
 	float3 viewRay = normalize(origin);
-	float3 reflection = reflect(TESR_ScreenSpaceLightDir.xyz, normal);
+	float3 reflection = reflect(TESR_ViewSpaceLightDir.xyz, normal);
 
-	// float diffuse = dot(normal, TESR_ScreenSpaceLightDir.xyz);
+	// float diffuse = dot(normal, TESR_ViewSpaceLightDir.xyz);
 	float specular = pow(dot(viewRay, reflection), Glossiness) * Glossiness * Glossiness;
 	
 	specular = lerp(specular, 0.0, origin.z/DrawDistance);
