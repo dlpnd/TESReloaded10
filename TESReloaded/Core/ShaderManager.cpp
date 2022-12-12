@@ -756,6 +756,9 @@ void ShaderManager::UpdateConstants() {
 	float weatherPercent = WorldSky->weatherPercent;
 	float lastGameTime = ShaderConst.GameTime.y;
 
+	TheRenderManager->UpdateSceneCameraData();
+	TheRenderManager->SetupSceneCamera();
+
 	TimeGlobals* GameTimeGlobals = TimeGlobals::Get();
 	float GameHour = GameTimeGlobals->GameHour->data;
 	float DaysPassed = GameTimeGlobals->GameDaysPassed ? GameTimeGlobals->GameDaysPassed->data : 1.0f;
@@ -764,8 +767,6 @@ void ShaderManager::UpdateConstants() {
 	float SunriseEnd = WorldSky->GetSunriseEnd();
 	float SunsetStart = WorldSky->GetSunsetBegin();
 	float SunsetEnd = WorldSky->GetSunsetEnd();
-
-	TheRenderManager->UpdateSceneCameraData();
 
 	ShaderConst.GameTime.x = TimeGlobals::GetGameTime(); //time in milliseconds
 	ShaderConst.GameTime.y = GameHour; //time in hours
@@ -783,6 +784,7 @@ void ShaderManager::UpdateConstants() {
 			ShaderConst.SunDir.x = Tes->directionalLight->direction.x * -1;
 			ShaderConst.SunDir.y = Tes->directionalLight->direction.y * -1;
 			ShaderConst.SunDir.z = Tes->directionalLight->direction.z * -1;
+			}
 
 			// expose the light vector in view space for screen space lighting
 			D3DXVec4Transform(&ShaderConst.ScreenSpaceLightDir, &ShaderConst.SunDir, &TheRenderManager->ViewProjMatrix);
@@ -1517,7 +1519,6 @@ void ShaderManager::UpdateConstants() {
 			if (weatherPercent == 1.0f && ShaderConst.fogData.y > TheSettingManager->SettingsVolumetricFog.MaxDistance) ShaderConst.VolumetricFog.Data.w = 0.0f;
 		}
 	}
-
 }
 
 void ShaderManager::CreateShader(const char* Name) {
@@ -1853,7 +1854,8 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 	TESWorldSpace* currentWorldSpace = Player->GetWorldSpace();
 	TESObjectCELL* currentCell = Player->parentCell;
 
-	TheRenderManager->SetupSceneCamera();
+	TheShaderManager->UpdateConstants();
+
 	Device->SetStreamSource(0, FrameVertex, 0, sizeof(FrameVS));
 	Device->SetFVF(FrameFVF);
 	Device->StretchRect(RenderTarget, NULL, RenderedSurface, NULL, D3DTEXF_NONE);
