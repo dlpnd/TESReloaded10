@@ -3,6 +3,8 @@
 //
 // Parameters:
 
+// autowater surface shader
+
 float4 EyePos : register(c1);
 float4 ShallowColor : register(c2);
 float4 DeepColor : register(c3);
