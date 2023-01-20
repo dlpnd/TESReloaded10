@@ -358,7 +358,11 @@ ShaderRecord* ShaderRecord::LoadShader(const char* Name, const char* SubPath) {
 	strcpy(FileNameBinary, FileName);
 	strcat(FileName, ".hlsl");
 
+	Logger::Log("Loading Shader: %s", FileNameBinary);
+
     HRESULT prepass = D3DXPreprocessShaderFromFileA(FileName, NULL, NULL, &ShaderSource , &Errors);
+	ShaderRecord::LogShaderCompileErrors(FileNameBinary, prepass, Errors);
+
 	bool Compile = ShouldCompileShader(FileNameBinary, FileName, (ShaderCompileType) TheSettingManager->SettingsMain.Develop.CompileShaders);
 	if (prepass == D3D_OK) {
 		if (strstr(Name, ".vso"))
@@ -366,8 +370,12 @@ ShaderRecord* ShaderRecord::LoadShader(const char* Name, const char* SubPath) {
 		else if (strstr(Name, ".pso"))
 			strcpy(ShaderProfile, "ps_3_0");
 		if (Compile) {
-			D3DXCompileShaderFromFileA(FileName, NULL, NULL, "main", ShaderProfile, NULL, &Shader, &Errors, &ConstantTable);
-			if (Errors) Logger::Log((char*)Errors->GetBufferPointer());
+			Logger::Log("Compiling Shader %s.", FileNameBinary);
+
+			HRESULT compileResult = D3DXCompileShaderFromFileA(FileName, NULL, NULL, "main", ShaderProfile, NULL, &Shader, &Errors, &ConstantTable);
+			ShaderRecord::LogShaderCompileErrors(FileNameBinary, compileResult, Errors);
+
+			// save compiled contents if compilation was a success
 			if (Shader) {
 				Function = Shader->GetBufferPointer();
 				std::ofstream FileBinary(FileNameBinary, std::ios::out | std::ios::binary);
@@ -378,6 +386,7 @@ ShaderRecord* ShaderRecord::LoadShader(const char* Name, const char* SubPath) {
 			}
 		}
 		else {
+			// simply load shader if compilation isn't necessary
 			std::ifstream FileBinary(FileNameBinary, std::ios::in | std::ios::binary | std::ios::ate);
 			if (FileBinary.is_open()) {
 				std::streamoff Size = FileBinary.tellg();
@@ -392,7 +401,10 @@ ShaderRecord* ShaderRecord::LoadShader(const char* Name, const char* SubPath) {
 				Logger::Log("ERROR: Shader %s not found. Try to enable the CompileShader option to recompile the shaders.", FileNameBinary);
 			}
 		}
+
+		// Shader was compiled or loaded from compiled binary
 		if (Shader) {
+			Logger::Log("Creating Shader Record for shader: %s", FileNameBinary);
 			if (ShaderProfile[0] == 'v') {
 				ShaderProg = new ShaderRecordVertex();
 				TheRenderManager->device->CreateVertexShader((const DWORD*)Function, &((ShaderRecordVertex*)ShaderProg)->ShaderHandle);
@@ -404,16 +416,24 @@ ShaderRecord* ShaderRecord::LoadShader(const char* Name, const char* SubPath) {
 			ShaderProg->CreateCT(ShaderSource, ConstantTable);
 			Logger::Log("Shader loaded: %s", FileNameBinary);
 		}
-	}
-	else {
-		if (Errors) Logger::Log((char*)Errors->GetBufferPointer());
+		else {
+			Logger::Log("ERROR: Couldn't load shader: %s", FileNameBinary);
+		}
 	}
 
 	if (ShaderSource) ShaderSource->Release();
 	if (Shader) Shader->Release();
 	if (Errors) Errors->Release();
+	if (!ShaderProg) Logger::Log("ERROR: Couldn't create shader record for shader: %s", FileNameBinary);
 	return ShaderProg;
+}
 
+
+void ShaderRecord::LogShaderCompileErrors(char FileNameBinary[MAX_PATH], HRESULT compileResult, ID3DXBuffer* ErrorBuffer) {
+	if (compileResult == E_OUTOFMEMORY) Logger::Log("ERROR: OUT OF MEMORY loading shader %s:", FileNameBinary);
+	if (compileResult == D3DXERR_INVALIDDATA) Logger::Log("ERROR: INVALID DATA loading shader %s:", FileNameBinary);
+	if (compileResult == D3DERR_INVALIDCALL) Logger::Log("ERROR: INVALID CALL loading shader %s:", FileNameBinary);
+	if (ErrorBuffer) Logger::Log((char*)ErrorBuffer->GetBufferPointer());
 }
 
 /**

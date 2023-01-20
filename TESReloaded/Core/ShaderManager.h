@@ -211,6 +211,8 @@ public:
 	virtual void			SetCT();
  	virtual void			CreateCT(ID3DXBuffer* ShaderSource, ID3DXConstantTable* ConstantTable);
 	virtual void			SetShaderConstantF(UInt32 RegisterIndex, D3DXVECTOR4* Value, UInt32 RegisterCount) = 0;
+	
+	static void				LogShaderCompileErrors(char FileNameBinary[MAX_PATH], HRESULT compileResult, ID3DXBuffer* ErrorBuffer);
 
 	static ShaderRecord*	LoadShader(const char* Name, const char* SubPath);
 	
